@@ -4,7 +4,8 @@ A Streamlit research environment for screening equities, reviewing price and fun
 
 ## What the app implements
 
-- **Price ingestion:** one non-threaded Yahoo batch with sequential retry for partial failures, or import a user-supplied/licensed long-format OHLCV CSV; per-ticker quality flags for stale data, invalid prices and extreme daily moves.
+- **Public-safe price mode:** the default public app uses deterministic synthetic DEMO prices, never calls a market-data API at startup, labels every synthetic series, and skips real-company SEC fundamentals. For actual securities, switch to **Import OHLCV CSV** and upload a data set you have permission to use and publicly display. The Yahoo adapter is optional/non-public and is not part of the default public runtime.
+- **Price quality:** per-ticker flags for stale series, invalid prices and extreme daily moves; invalid OHLC rows are excluded from technical calculations while large moves remain flagged for manual review.
 - **Technical factors:** momentum 12–1M and 6–1M, MA50/MA200 trend, MA200 slope, ADX(14), ATR(20), 20-/55-session breakout and 50-session low trigger. Indicators and daily stop logic use adjusted OHLC where available to avoid split-driven false jumps; latest ATR is converted to the quoted-price scale for share sizing.
 - **Official filing fundamentals:** SEC EDGAR Company Facts for supported filers, with every fact filtered by its filing date for as-of snapshots; separate SEC submissions metadata supplies SIC codes/descriptions and a coarse SIC major-industry group. It is not a GICS/ICB sector feed. Enter a contact email in the sidebar or set the Streamlit secret `SEC_CONTACT_EMAIL`.
 - **Explicit data coverage:** missing metrics stay missing; the app does not manufacture neutral 50-point fundamental scores.
@@ -20,7 +21,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 
 ## Important limits (not a claim of production-grade investment performance)
 
-1. **Yahoo Finance:** `yfinance` is an unofficial client and Yahoo may return HTTP 401/invalid-crumb errors or block usage. It is kept as an experimental source only, and public use/redistribution requires checking Yahoo's terms and appropriate rights. For a public app, use the **Import OHLCV CSV** provider with data for which you have suitable rights. The app deliberately no longer calls Yahoo's unstable `.info` endpoint for fundamentals.
+1. **Public-data rights:** the deployed/public UI does not fetch or redistribute Yahoo prices. Its default is clearly labeled synthetic data; real prices are user-supplied through CSV. The optional Yahoo adapter is intended only for explicitly configured, non-public experimentation and requires checking the provider's terms and data rights. SEC facts are disabled in synthetic-demo mode.
 2. **SEC coverage:** SEC Company Facts only covers mapped SEC filers and available XBRL tags. Accounting definitions and fiscal periods differ; reported values need data-quality and issuer-by-issuer review.
 3. **Valuation estimates:** P/E and FCF yield based on current price × the latest reported shares outstanding can be materially wrong for ADRs, dual-class companies or stale share counts. These estimates are excluded from scoring by default.
 4. **Backtest universe:** the entered symbol list is a current user-selected universe, not a point-in-time, survivorship-bias-free database. The engine stops instead of silently dropping held securities with missing future returns.
