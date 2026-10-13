@@ -514,3 +514,15 @@ def test_chronological_period_summary_splits_in_time_order_and_reports_holdout()
     assert summary.iloc[1]["End date"] < summary.iloc[2]["Start date"]
     assert summary.iloc[2]["CAGR"] > summary.iloc[1]["CAGR"]
     assert "Benchmark CAGR" in summary.columns
+
+
+def test_hysteresis_tie_breaking_is_deterministic_by_ticker():
+    from qlab.strategy import select_with_hysteresis
+
+    scores = pd.Series({"B": 75.0, "A": 75.0, "C": 80.0, "D": 70.0})
+    eligible = pd.Series(True, index=scores.index)
+    selected = select_with_hysteresis(
+        scores, eligible, previous={"B", "A"}, top_n=2,
+        min_improvement=0.0, exit_score_floor=0.0, max_replacements=1,
+    )
+    assert selected == {"B", "C"}
