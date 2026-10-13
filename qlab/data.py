@@ -604,8 +604,12 @@ def sec_fundamental_snapshot(
     coverage_pct = sum(bool(pd.notna(v)) for v in fields) / len(fields) * 100
     status = "OK" if coverage_pct >= 50 and len(filing_dates) >= 3 else "Partial SEC coverage"
 
+    sic_code = fact_bundle.get("sic")
+    sic_description = str(fact_bundle.get("sic_description", "") or "")
+    sic_category = fact_bundle.get("sic_group") or sic_group(sic_code)
     return {
         "Ticker": fact_bundle["ticker"], "Company": fact_bundle["title"],
+        "SEC SIC": sic_code, "SEC SIC Description": sic_description, "SIC group": sic_category,
         "Source": "SEC EDGAR Company Facts", "As of": cutoff.isoformat(),
         "Financial period": latest_period, "Latest filing date": latest_filed,
         "Revenue": revenue_last, "Revenue growth %": revenue_growth,
