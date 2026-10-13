@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants, industry_exposure_summary
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -604,6 +604,33 @@ with tab_strategy:
         })
         st.download_button("Stáhnout rozdělení období CSV", period_summary.to_csv(index=False).encode("utf-8"), "chronological_period_summary.csv", "text/csv")
         st.caption("Rozdělení je chronologické 60/20/20 (train/validation/holdout), se stejnými parametry a bez optimalizace uvnitř jednotlivých částí. Holdout je opravdu nedotčený pouze tehdy, pokud parametry neupravuješ podle jeho výsledku.")
+        st.markdown("#### Nejistota výsledků · moving-block bootstrap")
+        st.caption("Resampling zachovává krátké sekvence měsíčních výnosů, aby výsledek nebyl založen jen na pořadí jednoho konkrétního průchodu. Je to diagnostický interval, nikoli záruka statistického pokrytí nebo náhrada point-in-time univerza.")
+        try:
+            block_length = min(6, max(1, len(curve) // 2))
+            uncertainty = moving_block_bootstrap_uncertainty(
+                curve, initial=capital, bootstrap_samples=500, block_length=block_length, seed=42
+            )
+            uncertainty_display = uncertainty.copy()
+            for idx, row in uncertainty_display.iterrows():
+                metric = row["Metric"]
+                columns = ["Observed", "5th percentile", "Median bootstrap", "95th percentile"]
+                if metric in {"CAGR", "Max drawdown"}:
+                    uncertainty_display.loc[idx, columns] = [
+                        f"{float(row[col]):.1%}" if np.isfinite(float(row[col])) else "—" for col in columns
+                    ]
+                elif metric == "Final equity":
+                    uncertainty_display.loc[idx, columns] = [
+                        f"$\{float(row[col]):,.0f}" if np.isfinite(float(row[col])) else "—" for col in columns
+                    ]
+                else:
+                    uncertainty_display.loc[idx, columns] = [
+                        f"{float(row[col]):.2f}" if np.isfinite(float(row[col])) else "—" for col in columns
+                    ]
+            st.dataframe(uncertainty_display, width="stretch", hide_index=True)
+            st.download_button("Stáhnout bootstrap intervaly CSV", uncertainty.to_csv(index=False).encode("utf-8"), "bootstrap_uncertainty.csv", "text/csv")
+        except Exception as exc:
+            st.warning(f"Bootstrap nejistoty nebyl vypočten: {type(exc).__name__}: {exc}")
         variant_saved = st.session_state.get("stop_variant_comparison")
         if variant_saved and variant_saved.get("signature") == signature:
             st.markdown("#### Srovnání výstupních pravidel")
