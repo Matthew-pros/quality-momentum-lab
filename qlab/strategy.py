@@ -539,6 +539,8 @@ def run_monthly_backtest(
     equity = float(initial)
     previous_holdings: set[str] = set()
     previous_weights: dict[str, float] = {}
+    # Persist the post-close high-water mark across rebalance months for existing positions.
+    stop_high_water: dict[str, float] = {}
     # First usable decision requires at least 252 trading days of history in the daily indicators.
     start_idx = 12
     for i in range(start_idx, len(monthly) - 1):
@@ -579,20 +581,22 @@ def run_monthly_backtest(
             selected, cross, method=weighting_method, max_position_weight=max_position_weight
         )
         names = set(previous_weights) | set(new_weights)
-        turnover = sum(abs(new_weights.get(t, 0.0) - previous_weights.get(t, 0.0)) for t in names)
-        transaction_cost = turnover * float(cost_bps) / 10_000
+        rebalance_turnover = sum(abs(new_weights.get(t, 0.0) - previous_weights.get(t, 0.0)) for t in names)
 
         # Run the chosen daily-bar stop variant. Month-end-only models continue to
-        # use adjusted close-to-close returns; stop variants can exit earlier in-month.
+        # use adjusted close-to-close returns; daily stops persist high-water marks.
         ticker_returns: dict[str, float] = {}
         ticker_exit_reason: dict[str, str] = {}
         ticker_exit_date: dict[str, str] = {}
+        updated_high_water: dict[str, float] = {}
         daily_stop_modes = {"ATR trailing stop", "Daily 50-day low", "ATR + daily 50-day low"}
         for ticker in selected:
             if stop_mode in daily_stop_modes:
-                ret, reason, exit_date = _simulate_position_month(
+                prior_high = stop_high_water.get(ticker) if ticker in previous_holdings else None
+                ret, reason, exit_date, high_water = _simulate_position_month(
                     prices[ticker], indicator_cache.get(ticker), decision_date, row_return_date,
                     stop_mode=stop_mode, stop_atr_multiple=stop_atr_multiple,
+                    prior_high_water=prior_high,
                 )
                 if reason == "MISSING" or not np.isfinite(ret):
                     raise ValueError(
@@ -607,6 +611,8 @@ def run_monthly_backtest(
                 ticker_returns[ticker] = float(ret)
                 ticker_exit_reason[ticker] = reason
                 ticker_exit_date[ticker] = exit_date
+                if reason == "HOLD" and np.isfinite(high_water):
+                    updated_high_water[ticker] = float(high_water)
             else:
                 ret = next_returns.get(ticker, np.nan)
                 if pd.isna(ret):
@@ -619,10 +625,18 @@ def run_monthly_backtest(
                 ticker_exit_date[ticker] = ""
 
         gross_return = float(sum(new_weights.get(ticker, 0.0) * ticker_returns[ticker] for ticker in selected)) if selected else 0.0
+        stopped = {ticker for ticker in selected if ticker_exit_reason[ticker] != "HOLD"}
+        # A stop is a new sell trade during the month; charge costs on the estimated
+        # market value actually liquidated, in addition to any rebalance trades.
+        stop_turnover = sum(
+            max(0.0, new_weights.get(ticker, 0.0) * (1 + ticker_returns[ticker]))
+            for ticker in stopped
+        )
+        turnover = rebalance_turnover + stop_turnover
+        transaction_cost = turnover * float(cost_bps) / 10_000
+        stop_transaction_cost = stop_turnover * float(cost_bps) / 10_000
         net_return = gross_return - transaction_cost
         equity *= (1 + net_return)
-
-        stopped = {ticker for ticker in selected if ticker_exit_reason[ticker] != "HOLD"}
         survivors = [ticker for ticker in selected if ticker not in stopped]
         drifted_weights: dict[str, float] = {}
         if 1 + net_return > 0:
@@ -646,7 +660,10 @@ def run_monthly_backtest(
             "Gross exposure %": effective_exposure,
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
             "Surviving weights": ", ".join(f"{ticker}:{drifted_weights[ticker]:.3f}" for ticker in sorted(drifted_weights)),
+            "Rebalance turnover": rebalance_turnover,
+            "Stop turnover": stop_turnover,
             "Gross turnover": turnover,
+            "Stop transaction cost": stop_transaction_cost,
             "Estimated cost (bps of portfolio)": transaction_cost * 10_000,
             "Selected score mean": float(scores.reindex(selected).mean()) if selected else np.nan,
         })
@@ -666,11 +683,15 @@ def run_monthly_backtest(
             "Min ADX": min_adx,
             "Min score": min_score,
             "Hysteresis points": hysteresis,
+            "Rebalance turnover": rebalance_turnover,
+            "Stop turnover": stop_turnover,
             "Gross turnover": turnover,
+            "Stop transaction cost": stop_transaction_cost,
             "Cost bps": cost_bps,
         })
         previous_holdings = set(survivors)
         previous_weights = drifted_weights
+        stop_high_water = updated_high_water
     if not rows:
         return None, None, None
     curve = pd.DataFrame(rows).set_index("Date")
