@@ -1032,14 +1032,25 @@ with tab_valuation:
     sec_fcf = safe_float(dcf_snapshot.get("FCF"), 0.0)
     sec_shares = safe_float(dcf_snapshot.get("Shares outstanding (reported)"), 0.0)
     current_price = safe_float(dcf_row.get("Price"), 0.0)
+    dcf_quote_currency = str(currency_by_ticker.get(dcf_ticker, "UNKNOWN") or "UNKNOWN").upper()
+    dcf_fcf_currency = str(dcf_snapshot.get("FCF unit", "UNKNOWN") or "UNKNOWN").upper()
+    dcf_currency_match = dcf_quote_currency not in {"UNKNOWN", ""} and dcf_quote_currency == dcf_fcf_currency
+    dcf_sec_fcf_default = sec_fcf if dcf_currency_match else 0.0
     growth_raw = dcf_snapshot.get("Revenue growth %")
     has_revenue_growth = pd.notna(growth_raw) if growth_raw is not None else False
     revenue_growth = safe_float(growth_raw, 0.0) if has_revenue_growth else 0.0
     default_growth = float(np.clip(revenue_growth, -20.0, 30.0))
     st.caption(
         f"Zdroj: {dcf_snapshot.get('Source', 'nenačteno')} · období: {dcf_snapshot.get('Financial period', '—') or '—'} · "
-        f"poslední podání: {dcf_snapshot.get('Latest filing date', '—') or '—'}"
+        f"poslední podání: {dcf_snapshot.get('Latest filing date', '—') or '—'} · "
+        f"měna ceny: {dcf_quote_currency} · jednotka SEC FCF: {dcf_fcf_currency}"
     )
+    if sec_fcf > 0 and not dcf_currency_match:
+        st.warning(
+            f"Jednotka FCF z SEC ({dcf_fcf_currency}) se neshoduje s měnou ceny ({dcf_quote_currency}), "
+            "nebo není jedna z měn známa. SEC FCF se proto nepředvyplní. Pokud chceš scénář počítat, převeď "
+            "normalizované FCF do stejné měny jako cena a ručně zkontroluj poměr ADR / počet akcií."
+        )
     if not has_revenue_growth:
         st.info("SEC růst tržeb není dostupný. Výchozích 0 % pro růst FCF je pouze explicitní výchozí scénář, nikoli odhadovaný údaj.")
     if sec_shares <= 0:
@@ -1051,8 +1062,8 @@ with tab_valuation:
     input_left, input_right = st.columns(2)
     with input_left:
         base_fcf = st.number_input(
-            "Normalizované roční FCF (v reportovací měně)",
-            min_value=0.0, value=max(0.0, sec_fcf), step=1_000_000.0, format="%.2f",
+            f"Normalizované roční FCF ({dcf_quote_currency}; převeď sem FCF, je-li potřeba)",
+            min_value=0.0, value=max(0.0, dcf_sec_fcf_default), step=1_000_000.0, format="%.2f",
             help="Předvyplněno z posledního dostupného ročního výkazu. Provozní cash flow minus capex není univerzální FCFE definice; zkontroluj výkaz."
         )
         shares_input = st.number_input(
@@ -1061,7 +1072,7 @@ with tab_valuation:
             help="SEC snapshot může obsahovat zastaralý či jinak definovaný počet akcií. U ADR a více tříd je nutné ověřit poměr a odpovídající obchodovanou třídu."
         )
         quote_price = st.number_input(
-            "Aktuální cena podle screeneru",
+            f"Aktuální cena podle screeneru ({dcf_quote_currency})",
             min_value=0.0, value=max(0.0, current_price), step=1.0, format="%.4f",
             help="Pro porovnání musí být cena a FCF/share inputs ve srovnatelných měnových a jednotkových konvencích."
         )
@@ -1071,7 +1082,7 @@ with tab_valuation:
         terminal_growth_pct = st.slider("Terminální růst (%)", 0.0, 4.0, 2.5, 0.25)
         forecast_years = st.slider("Délka prognózy (roky)", 3, 10, 5)
     confirmed_units = st.checkbox(
-        "Ověřil/a jsem, že FCF, počet akcií a cena jsou ve srovnatelných měnových a třídních jednotkách.",
+        "Ověřil/a jsem jednotku SEC FCF, měnu ceny, počet akcií, obchodovanou třídu a ADR poměr.",
         value=False,
         help="Aplikace nezná u každého XBRL faktu spolehlivou jednotku/ADR poměr a automaticky neprovádí FX konverzi."
     )
@@ -1090,8 +1101,8 @@ with tab_valuation:
                 shares_outstanding=shares_input,
             )
             a,b,c1,d = st.columns(4)
-            a.metric("Modelová hodnota / akcii", f"{dcf_result['Implied value per share']:,.2f}")
-            b.metric("Aktuální cena", f"{quote_price:,.2f}")
+            a.metric(f"Modelová hodnota / akcii ({dcf_quote_currency})", f"{dcf_result['Implied value per share']:,.2f}")
+            b.metric(f"Aktuální cena ({dcf_quote_currency})", f"{quote_price:,.2f}")
             upside = (dcf_result["Implied value per share"] / quote_price - 1) * 100 if quote_price > 0 else np.nan
             c1.metric("Odchylka vůči ceně", "—" if not np.isfinite(upside) else f"{upside:+.1f}%")
             d.metric("Terminální hodnota / PV", f"{dcf_result['Terminal value share %']:.1f}%")
@@ -1131,6 +1142,28 @@ with tab_valuation:
             heat.update_layout(height=330, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(heat, width="stretch")
             st.download_button("Stáhnout DCF scénáře CSV", sensitivity.to_csv(index=False).encode("utf-8"), "dcf_sensitivity.csv", "text/csv")
+            scenario_export = pd.DataFrame([{
+                "Ticker": dcf_ticker,
+                "Quote currency": dcf_quote_currency,
+                "SEC revenue unit": dcf_snapshot.get("Revenue unit", ""),
+                "SEC net income unit": dcf_snapshot.get("Net income unit", ""),
+                "SEC FCF unit": dcf_fcf_currency,
+                "Base FCF": base_fcf,
+                "Shares outstanding": shares_input,
+                "Quote price": quote_price,
+                "FCF growth %": growth_pct,
+                "Cost of equity %": cost_equity_pct,
+                "Terminal growth %": terminal_growth_pct,
+                "Forecast years": forecast_years,
+                "Implied equity value": dcf_result["Implied equity value"],
+                "Implied value per share": dcf_result["Implied value per share"],
+                "Terminal value share %": dcf_result["Terminal value share %"],
+                "Units attested by user": confirmed_units,
+                "Source": dcf_snapshot.get("Source", "Manual inputs"),
+                "Financial period": dcf_snapshot.get("Financial period", ""),
+                "Latest filing date": dcf_snapshot.get("Latest filing date", ""),
+            }])
+            st.download_button("Stáhnout DCF předpoklady a základní výsledek CSV", scenario_export.to_csv(index=False).encode("utf-8"), "dcf_assumptions_and_result.csv", "text/csv")
         except Exception as exc:
             st.error(f"DCF scénář nešlo spočítat: {type(exc).__name__}: {exc}")
     st.warning(
