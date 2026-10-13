@@ -600,3 +600,34 @@ def test_sic_groups_are_explicit_coarse_groups_not_claimed_gics_sectors():
     assert sic_group(7372) == "Services"
     assert sic_group(None) == "Unclassified"
     assert sic_group("not-a-code") == "Unclassified"
+
+
+def test_sector_cap_limits_initial_portfolio_and_leaves_unknown_sector_unconstrained():
+    from qlab.strategy import select_with_hysteresis
+
+    scores = pd.Series({"A": 95.0, "B": 90.0, "C": 85.0, "D": 80.0, "E": 75.0})
+    eligible = pd.Series(True, index=scores.index)
+    groups = {"A":"Manufacturing", "B":"Manufacturing", "C":"Services", "D":"Finance", "E":"Unclassified"}
+    selected = select_with_hysteresis(
+        scores, eligible, previous=set(), top_n=4,
+        sector_map=groups, max_sector_positions=1,
+    )
+    assert len(selected) == 4
+    assert sum(groups[ticker] == "Manufacturing" for ticker in selected) == 1
+    assert "E" in selected  # unclassified names are not falsely all treated as one sector
+
+
+def test_sector_cap_reduces_existing_concentration_deterministically_and_respects_replacement_limit():
+    from qlab.strategy import select_with_hysteresis
+
+    scores = pd.Series({"A": 88.0, "B": 82.0, "C": 80.0, "D": 79.0, "E": 65.0})
+    eligible = pd.Series(True, index=scores.index)
+    groups = {"A":"Manufacturing", "B":"Manufacturing", "C":"Services", "D":"Finance", "E":"Utilities"}
+    selected = select_with_hysteresis(
+        scores, eligible, previous={"A", "B", "C"}, top_n=3,
+        min_improvement=7, exit_score_floor=30, max_replacements=1,
+        sector_map=groups, max_sector_positions=1,
+    )
+    assert "A" in selected and "B" not in selected
+    assert len(selected) == 3
+    assert len({groups[t] for t in selected}) == 3
