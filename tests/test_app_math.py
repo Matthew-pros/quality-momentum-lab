@@ -60,12 +60,15 @@ def test_technical_indicators_have_expected_units_and_exclude_current_bar_from_b
     frame = prices["AAA"].copy()
     indicators = calculate_indicators(frame)
     last = indicators.index[-1]
-    previous_55_high = frame["High"].iloc[-56:-1].max()
+    factor = frame["Adj Close"] / frame["Close"]
+    adjusted_high = frame["High"] * factor
+    previous_55_high = adjusted_high.iloc[-56:-1].max()
     assert indicators["ATR20"].dropna().gt(0).all()
     assert indicators["ATR20%"].dropna().gt(0).all()
     assert indicators["ADX14"].dropna().between(0, 100).all()
     assert np.isclose(indicators.loc[last, "High55 prior"], previous_55_high)
-    assert indicators.loc[last, "Close"] == frame["Close"].iloc[-1]
+    assert indicators.loc[last, "Close"] == frame["Adj Close"].iloc[-1]
+    assert indicators.loc[last, "Close raw"] == frame["Close"].iloc[-1]
     assert indicators.loc[last, "Momentum 12-1M"] == pytest.approx(
         frame["Adj Close"].iloc[-22] / frame["Adj Close"].iloc[-253] - 1
     )
