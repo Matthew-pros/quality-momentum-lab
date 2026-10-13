@@ -1027,7 +1027,7 @@ def test_expanding_walk_forward_rejects_overlapping_folds_and_insufficient_histo
             train_months=12, test_months=6, step_months=3, min_train_months=12,
             top_n=2, use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
         )
-    with pytest.raises(ValueError, match="Not enough history"):
+    with pytest.raises(ValueError, match="Insufficient monthly history"):
         expanding_walk_forward(
             prices=synthetic_prices(400), min_score_candidates=(20.0,), hysteresis_candidates=(5.0,),
             train_months=36, test_months=12, step_months=12, min_train_months=24,
