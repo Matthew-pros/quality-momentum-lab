@@ -468,7 +468,7 @@ with tab_strategy:
     compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants")
     train_holdout_button = st.button(
         "Vybrat parametry na tréninku a ověřit holdout",
-        key="train_select_holdout",
+        key="train_select_holdout_button",
         help="Porovná 9 variant min-score × hystereze pouze na prvních 60 % výnosové historie; na posledních 40 % ukáže pouze výsledky vítěze zvoleného tréninkovým Sharpe. Nejde o rolling walk-forward."
     )
     saved = st.session_state.get("backtest_result")
