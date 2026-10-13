@@ -33,7 +33,7 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     plus_di = 100 * plus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
     minus_di = 100 * minus_dm.ewm(alpha=1/14, min_periods=14, adjust=False).mean() / atr14.replace(0, np.nan)
     dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-    adx14 = dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    adx14 = dx.ewm(alpha=1/14, min_periods=14, adjust=False).mean().clip(lower=0, upper=100)
     atr20 = true_range.ewm(alpha=1/20, min_periods=20, adjust=False).mean()
 
     out = pd.DataFrame(index=close.index)
