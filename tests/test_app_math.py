@@ -1156,6 +1156,10 @@ def test_point_in_time_universe_parser_rejects_overlapping_and_open_ended_interv
     with pytest.raises(ValueError, match="valid Start date"):
         parse_universe_membership(io.BytesIO(bad_start))
 
+    bad_end = b"Ticker,Start date,End date\nAAA,2020-01-01,not-a-date\n"
+    with pytest.raises(ValueError, match="non-empty End date must be a valid date"):
+        parse_universe_membership(io.BytesIO(bad_end))
+
 
 def test_point_in_time_membership_filters_before_cross_sectional_factor_ranking():
     from qlab.strategy import _build_monthly_cross_section, _precompute_indicator_cache
@@ -1211,3 +1215,19 @@ def test_backtest_never_selects_a_ticker_before_its_membership_start_date():
         indicator_cache=_precompute_indicator_cache(prices), universe_history=history,
     )
     assert "CCC" in set(late_cross["Ticker"])
+
+
+def test_backtest_fails_fast_when_point_in_time_universe_lists_unavailable_ohlcv_symbol():
+    from qlab.strategy import run_monthly_backtest
+    from qlab.universe import parse_universe_membership
+
+    history = parse_universe_membership(pd.DataFrame([
+        {"Ticker":"AAA","Start date":"2018-01-01","End date":""},
+        {"Ticker":"DELISTED","Start date":"2018-01-01","End date":"2021-05-31"},
+    ]))
+    with pytest.raises(ValueError, match="without any OHLCV series.*DELISTED"):
+        run_monthly_backtest(
+            prices=synthetic_prices(600),
+            use_fundamentals=False,
+            universe_history=history,
+        )
