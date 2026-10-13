@@ -56,3 +56,28 @@ def test_streamlit_home_and_tabs_render_without_live_network_calls(monkeypatch):
     rendered_subheaders = {str(element.value) for element in app.subheader}
     assert "Screener a podkladové metriky" in rendered_subheaders
     assert "Kontrola kvality dat" in rendered_subheaders
+
+
+def test_streamlit_backtest_and_train_holdout_buttons_run_offline(monkeypatch):
+    monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
+    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
+    st.cache_data.clear()
+
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=60)
+    app.run()
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+
+    run_button = next(button for button in app.button if button.label == "Spustit / přepočítat backtest")
+    run_button.click().run()
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+    assert "backtest_result" in app.session_state
+    assert app.session_state["backtest_result"]["error"] is None
+
+    holdout_button = next(button for button in app.button if button.label == "Vybrat parametry na tréninku a ověřit holdout")
+    holdout_button.click().run()
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+    assert "train_select_holdout" in app.session_state
+    result = app.session_state["train_select_holdout"]
+    assert result.get("error") is None
+    assert result["metrics"]["Holdout months"] >= 6
+    assert result["candidates"]["Selected by train"].sum() == 1
