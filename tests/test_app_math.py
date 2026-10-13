@@ -259,3 +259,24 @@ def test_strict_position_cap_can_leave_residual_cash():
     weights = _target_weights(["A", "B", "C"], cross, "Inverse ATR", 0.20)
     assert all(weight <= 0.20 + 1e-12 for weight in weights.values())
     assert sum(weights.values()) == pytest.approx(0.60)
+
+
+def test_czech_tax_review_flags_value_test_and_three_year_test_without_claiming_tax_due():
+    from qlab.tax_lots import fifo_ledger
+
+    short_hold_czk = pd.DataFrame([
+        {"Date":"2024-01-10","Ticker":"AAA","Type":"BUY","Quantity":10,"Price":50,"Fees":0,"Currency":"CZK"},
+        {"Date":"2025-11-10","Ticker":"AAA","Type":"SELL","Quantity":10,"Price":60,"Fees":0,"Currency":"CZK"},
+    ])
+    realized_small, _, _ = fifo_ledger(short_hold_czk)
+    assert not realized_small.iloc[0]["Holding period > 3 years"]
+    assert "value-test exemption" in realized_small.iloc[0]["Tax review status"]
+
+    long_hold_czk = pd.DataFrame([
+        {"Date":"2020-01-10","Ticker":"BBB","Type":"BUY","Quantity":1000,"Price":100,"Fees":0,"Currency":"CZK"},
+        {"Date":"2024-02-10","Ticker":"BBB","Type":"SELL","Quantity":1000,"Price":500,"Fees":0,"Currency":"CZK"},
+    ])
+    realized_large, _, annual_large = fifo_ledger(long_hold_czk)
+    assert realized_large.iloc[0]["Holding period > 3 years"]
+    assert "3-year time-test exemption" in realized_large.iloc[0]["Tax review status"]
+    assert annual_large.iloc[0]["Gross sale proceeds"] == pytest.approx(500_000)
