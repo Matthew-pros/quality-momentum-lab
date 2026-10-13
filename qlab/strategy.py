@@ -10,15 +10,27 @@ def _num(series):
 
 
 def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
-    """Calculate daily indicators using adjusted OHLC, excluding the current bar from breakouts."""
+    """Calculate indicators on a split/dividend-adjusted OHLC basis where possible."""
     if frame is None or frame.empty:
         return pd.DataFrame()
-    close = _num(frame.get("Close", frame.get("Adj Close", pd.Series(dtype=float))))
-    if close.empty:
+    raw_close = _num(frame.get("Close", frame.get("Adj Close", pd.Series(dtype=float))))
+    if raw_close.empty:
         return pd.DataFrame()
-    total_return_close = _num(frame.get("Adj Close", close)).reindex(close.index)
-    high = _num(frame.get("High", close)).reindex(close.index).fillna(close)
-    low = _num(frame.get("Low", close)).reindex(close.index).fillna(close)
+    adjusted_close = _num(frame.get("Adj Close", raw_close)).reindex(raw_close.index)
+    factor = (adjusted_close / raw_close).replace([np.inf, -np.inf], np.nan)
+    close = adjusted_close
+
+    def adjusted_ohlc(raw_name: str, adjusted_name: str) -> pd.Series:
+        if adjusted_name in frame:
+            values = _num(frame[adjusted_name]).reindex(close.index)
+        elif raw_name in frame:
+            values = _num(frame[raw_name]).reindex(close.index) * factor
+        else:
+            values = close.copy()
+        return values.fillna(close)
+
+    high = adjusted_ohlc("High", "Adj High")
+    low = adjusted_ohlc("Low", "Adj Low")
     prev_close = close.shift(1)
     true_range = pd.concat([
         high - low,
@@ -38,16 +50,19 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=close.index)
     out["Close"] = close
-    out["Adj Close"] = total_return_close
+    out["Adj Close"] = adjusted_close
+    out["Close raw"] = raw_close
     out["High"] = high
     out["Low"] = low
     out["MA50"] = close.rolling(50, min_periods=50).mean()
     out["MA200"] = close.rolling(200, min_periods=200).mean()
     out["MA200_prev20"] = close.rolling(200, min_periods=200).mean().shift(20)
-    out["Momentum 12-1M"] = total_return_close.shift(21) / total_return_close.shift(252) - 1
-    out["Momentum 6-1M"] = total_return_close.shift(21) / total_return_close.shift(126) - 1
+    out["Momentum 12-1M"] = close.shift(21) / close.shift(252) - 1
+    out["Momentum 6-1M"] = close.shift(21) / close.shift(126) - 1
     out["ADX14"] = adx14
     out["ATR14"] = atr14
+    # ATR is stored on the adjusted-price basis; prepare_screener converts the latest
+    # value back to the raw quote scale for position sizing.
     out["ATR20"] = atr20
     out["ATR20%"] = atr20 / close * 100
     out["High20 prior"] = high.shift(1).rolling(20, min_periods=20).max()
@@ -57,11 +72,9 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     out["Breakout55"] = close > out["High55 prior"]
     out["Trend OK"] = (close > out["MA200"]) & (out["MA50"] > out["MA200"]) & (out["MA200"] > out["MA200_prev20"])
     out["Below 50d low"] = close < out["Low50 prior"]
-    out["Daily return"] = total_return_close.pct_change(fill_method=None)
+    out["Daily return"] = close.pct_change(fill_method=None)
     out["Volatility20%"] = out["Daily return"].rolling(20, min_periods=20).std() * np.sqrt(252) * 100
-    out["Close raw"] = close
     return out.replace([np.inf, -np.inf], np.nan)
-
 
 def percentile_score(series: pd.Series, higher_better: bool = True) -> pd.Series:
     """Rank valid observations only; missing inputs remain missing, never fake-neutral."""
