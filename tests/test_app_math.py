@@ -787,3 +787,22 @@ def test_market_quality_rejects_inconsistent_ohlc_ranges_and_negative_volume():
     assert pd.isna(prices["AAA"].loc[index[1], "Close"])
     assert pd.isna(prices["AAA"].loc[index[2], "Close"])
     assert prices["AAA"].loc[index[0], "Close"] == pytest.approx(10.5)
+
+
+def test_industry_exposure_summary_reports_weights_not_just_position_counts():
+    from qlab.strategy import industry_exposure_summary
+
+    audit = pd.DataFrame({
+        "Signal date": pd.to_datetime(["2024-01-31","2024-02-29","2024-03-31"]),
+        "Target weights": ["AAA:0.600, BBB:0.400", "BBB:0.500, CCC:0.500", "AAA:1.000"],
+    })
+    summary = industry_exposure_summary(
+        audit,
+        sector_map={"AAA":"Technology", "BBB":"Finance / Insurance / Real Estate"},
+    ).set_index("SIC group")
+    assert summary.loc["Technology", "Average weight %"] == pytest.approx((60 + 0 + 100) / 3)
+    assert summary.loc["Finance / Insurance / Real Estate", "Average weight %"] == pytest.approx((40 + 50 + 0) / 3)
+    assert summary.loc["Unclassified", "Average weight %"] == pytest.approx((0 + 50 + 0) / 3)
+    assert summary.loc["Technology", "Rebalance months invested"] == 2
+    assert summary.loc["Finance / Insurance / Real Estate", "Maximum weight %"] == pytest.approx(50.0)
+    assert summary["Average weight %"].sum() == pytest.approx(100.0)
