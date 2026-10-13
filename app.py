@@ -522,7 +522,8 @@ with tab_strategy:
     classified_sector_count = sum(1 for ticker in universe if sector_map.get(ticker, "Unclassified") not in {"Unclassified", "Unknown", ""})
     if max_sector_positions > 0 and classified_sector_count < len(universe):
         st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
-    signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
+    signature = (tuple(universe), period, price_data_signature, universe_history_signature,
+        top_n, min_adx, min_score, hysteresis, max_replacements,
         max_sector_positions, commission_bps, half_spread_bps, slippage_bps, cost_bps, breakout_filter,
         weighting_method, backtest_max_weight, stop_mode, stop_atr,
         use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
@@ -567,7 +568,7 @@ with tab_strategy:
                     stop_atr_multiple=stop_atr, sector_map=sector_map,
                     max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                     commission_bps=commission_bps, half_spread_bps=half_spread_bps,
-                    slippage_bps=slippage_bps)
+                    slippage_bps=slippage_bps, universe_history=universe_history)
                 st.session_state["backtest_result"] = {
                     "curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None,
                     "fundamentals_history":fund_histories,"optional_history":optional_histories
@@ -606,7 +607,7 @@ with tab_strategy:
                     sector_map=sector_map,
                     max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                     commission_bps=commission_bps, half_spread_bps=half_spread_bps,
-                    slippage_bps=slippage_bps,
+                    slippage_bps=slippage_bps, universe_history=universe_history,
                 )
                 st.session_state["stop_variant_comparison"] = {"signature":signature,"table":variants}
         saved = st.session_state.get("backtest_result")
@@ -638,7 +639,7 @@ with tab_strategy:
                         stop_atr_multiple=stop_atr, sector_map=sector_map,
                         max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                         commission_bps=commission_bps, half_spread_bps=half_spread_bps,
-                        slippage_bps=slippage_bps,
+                        slippage_bps=slippage_bps, universe_history=universe_history,
                     )
                 st.session_state["train_select_holdout"] = {
                     "signature": signature, "candidates": candidates, "chosen": chosen,
@@ -680,7 +681,7 @@ with tab_strategy:
                         stop_atr_multiple=stop_atr, sector_map=sector_map,
                         max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                         commission_bps=commission_bps, half_spread_bps=half_spread_bps,
-                        slippage_bps=slippage_bps,
+                        slippage_bps=slippage_bps, universe_history=universe_history,
                     )
                 st.session_state["expanding_walk_forward"] = {
                     "signature": signature, "folds": folds, "candidates": candidate_table,
