@@ -621,7 +621,7 @@ with tab_strategy:
                     ]
                 elif metric == "Final equity":
                     uncertainty_display.loc[idx, columns] = [
-                        f"$\{float(row[col]):,.0f}" if np.isfinite(float(row[col])) else "—" for col in columns
+                        f"$\${float(row[col]):,.0f}" if np.isfinite(float(row[col])) else "—" for col in columns
                     ]
                 else:
                     uncertainty_display.loc[idx, columns] = [
