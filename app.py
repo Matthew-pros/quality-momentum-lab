@@ -157,6 +157,9 @@ with st.sidebar:
     hysteresis = st.slider("Hystereze skóre", 0, 25, 7, help="Nová akcie musí být lepší o tento počet bodů, aby vytlačila stávající pozici.")
     max_replacements = st.slider("Max. výměn za rebalancování", 0, 15, 2)
     breakout_filter = st.selectbox("Vstupní průraz", ["None", "20-day", "55-day"], index=0)
+    weighting_method = st.selectbox("Váhy pozic v backtestu", ["Equal weight", "Inverse ATR"], index=0,
+        help="Inverse ATR váží nižší volatilitu vyšší vahou; limit pozice může ponechat část portfolia v hotovosti.")
+    backtest_max_weight = st.slider("Max. váha pozice v backtestu (%)", 10, 50, 35, 5) / 100
     cost_bps = st.slider("Náklady na zobchodovaný objem (bps)", 0, 100, 15, 5)
     st.divider()
     capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
@@ -334,7 +337,7 @@ with tab_screener:
 
 with tab_strategy:
     st.subheader("Měsíční rebalancování · nízká obrátka")
-    st.markdown("Signál se vytváří na konci měsíce a výnos portfolia se počítá za následující měsíc. Náklady se aplikují na hrubý zobchodovaný objem. Hystereze omezuje výměny při malém rozdílu skóre.")
+    st.markdown("Signál se vytváří na konci měsíce a výnos portfolia se počítá za následující měsíc. Náklady se aplikují na hrubý zobchodovaný objem. Hystereze omezuje výměny při malém rozdílu skóre. Porušení 50denního minima je měsíční výstupní spouštěč.")
     sec_coverage = sum(
         1 for ticker in sec_bundles
         if ticker in prices and safe_float(fundamentals.get(ticker, {}).get("Fundamental coverage %", 0)) >= 50
@@ -345,8 +348,8 @@ with tab_strategy:
         help="Historický signál používá jen fakta zveřejněná do dne rozhodnutí. Zůstává survivorship bias, protože univerzum je současný seznam.")
     st.caption("Signálové parametry jsou vlevo. Stop-loss 50denní low / 3×ATR je v kalkulátoru pozic; tento měsíční backtest nepředstírá intradenní exekuci stopů.")
     signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
-        cost_bps, breakout_filter, use_pit, use_estimated_value, bool(sentiment_df is not None),
-        bool(revision_df is not None), capital)
+        cost_bps, breakout_filter, weighting_method, backtest_max_weight, use_pit,
+        use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
     saved = st.session_state.get("backtest_result")
     if run_backtest:
@@ -372,7 +375,8 @@ with tab_strategy:
                     initial=capital, min_adx=min_adx, min_score=min_score, hysteresis=hysteresis,
                     max_replacements=max_replacements, use_fundamentals=use_pit,
                     fundamentals_history=fund_histories, optional_history=optional_histories,
-                    require_breakout=breakout_filter)
+                    require_breakout=breakout_filter, weighting_method=weighting_method,
+                    max_position_weight=backtest_max_weight)
                 st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
         except Exception as exc:
             st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
@@ -396,7 +400,7 @@ with tab_strategy:
         e.metric("Konečná hodnota", f"${metrics['Final equity']:,.0f}")
         f.metric("Testované měsíce", str(metrics["Months"]))
         g.metric("Obrat / měsíc", f"{metrics['Average monthly turnover %']:.1f}%")
-        h.metric("Součet modelových nákladů", f"{metrics['Total transaction costs %']:.2f}%")
+        h.metric("Průměrná expozice", f"{metrics['Average gross exposure %']:.1f}%")
         equity_fig = go.Figure()
         equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Equity"],name="Strategie",line=dict(width=2.5,color="#72e0c1")))
         if "Benchmark equity" in curve:
