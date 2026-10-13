@@ -1149,6 +1149,29 @@ with tab_data:
             "ohlcv_history_long.csv", "text/csv",
             help="Formát kompatibilní s CSV importem této aplikace. V demo režimu obsahuje výhradně syntetické ceny.",
         )
+    if universe_history is not None:
+        membership_asof = max(pd.Timestamp(frame.index.max()) for frame in prices.values() if not frame.empty)
+        if membership_asof.tzinfo is not None:
+            membership_asof = membership_asof.tz_localize(None)
+        active_members = universe_members_asof(universe_history, membership_asof)
+        membership_report = universe_history.copy()
+        membership_report["Included on last price date"] = membership_report["Ticker"].isin(active_members or set())
+        st.markdown("#### Point-in-time složení investičního univerza")
+        st.caption(
+            f"Použité intervaly jsou včetně Start/End date; poslední cenové datum je {membership_asof.date()}. "
+            "Backtest nejprve omezí univerzum podle tohoto historického členství a teprve potom spočítá relativní faktorové ranky."
+        )
+        st.dataframe(membership_report, width="stretch", hide_index=True)
+        st.download_button(
+            "Stáhnout použitou historii členství CSV",
+            membership_report.to_csv(index=False).encode("utf-8"),
+            "point_in_time_universe_membership.csv", "text/csv",
+        )
+        st.warning(
+            "Tato funkce snižuje survivorship bias pouze tehdy, když členství pokrývá celý testovaný interval "
+            "a OHLCV soubor obsahuje všechny tehdejší tituly včetně delistovaných. Neověřuje úplnost zdroje třetí stranou."
+        )
+
     if valid_email:
         sec_report = []
         for ticker in universe:
@@ -1187,13 +1210,13 @@ with tab_method:
         - **Risk:** ATR(20), limit pozice a modelový stop ve vzdálenosti násobku ATR.
 
         ### Časová správnost
-        Fundamentální údaje z SEC se filtrují podle filed date a historické rozhodnutí nepoužije výkaz zveřejněný později. Tím se ale neřeší survivorship bias současného tickerového seznamu.
+        Fundamentální údaje z SEC se filtrují podle filed date a historické rozhodnutí nepoužije výkaz zveřejněný později. Volitelný intervalový CSV soubor (Ticker, Start date, End date) omezuje cross-section pouze na tituly, které podle dodaných dat patřily do univerza k rozhodovacímu datu. Členství se filtruje **před** výpočtem relativních percentilových skóre.
 
         ### Omezení
         - Veřejná aplikace nepoužívá tržní API automaticky. Výchozí data jsou syntetická; pro reálné ceny nahraj pouze CSV, jehož licence dovoluje veřejné zobrazení.
         - SEC Company Facts pokrývá reportující emitenty a standardizované XBRL tagy; metriky se mohou lišit účetními standardy a dostupností tagu.
         - P/E a FCF yield používají hrubý odhad tržní kapitalizace z ceny a posledního nahlášeného počtu akcií. U ADR, duálních tříd a změn kapitálu mohou být chybné, proto jsou výchozím stavem mimo skóre.
-        - Backtest používá současný seznam a není survivorship-bias-free. Měsíční close-to-close simulace není přesný broker fill model.
+        - Bez CSV historického členství backtest používá pevný seznam tickerů a není survivorship-bias-free. S intervalovým CSV a úplnými cenovými řadami delistovaných titulů lze toto zkreslení omezit, nikoli automaticky vyloučit. Měsíční a denní OHLC simulace nejsou přesný broker fill model.
         - Sentiment/revize jsou volitelné časované CSV; historický model vybírá jen poslední známý záznam k rozhodovacímu dni.
         - FIFO eviduje pořizovací náklady a poplatky; neurčuje českou daňovou povinnost a nepřepočítává měny.
         - Expanding walk-forward volí parametry z minulých dat a testuje je v neprolínajících se OOS foldech; každý fold začíná na hotovosti a na konci modelově likviduje pozice. Nejde o kontinuitní broker účet a neřeší survivorship bias.
