@@ -567,6 +567,8 @@ def run_monthly_backtest(
     commission_bps: float | None = None,
     half_spread_bps: float = 0.0,
     slippage_bps: float = 0.0,
+    evaluation_start_date: pd.Timestamp | str | None = None,
+    evaluation_end_date: pd.Timestamp | str | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -612,6 +614,21 @@ def run_monthly_backtest(
     if len(monthly) < 15:
         return None, None, None
     monthly_returns = monthly.pct_change(fill_method=None)
+    start_cutoff = pd.Timestamp(evaluation_start_date) if evaluation_start_date is not None else None
+    end_cutoff = pd.Timestamp(evaluation_end_date) if evaluation_end_date is not None else None
+    if monthly.index.tz is None:
+        if start_cutoff is not None and start_cutoff.tzinfo is not None:
+            start_cutoff = start_cutoff.tz_localize(None)
+        if end_cutoff is not None and end_cutoff.tzinfo is not None:
+            end_cutoff = end_cutoff.tz_localize(None)
+    else:
+        if start_cutoff is not None:
+            start_cutoff = start_cutoff.tz_localize(monthly.index.tz) if start_cutoff.tzinfo is None else start_cutoff.tz_convert(monthly.index.tz)
+        if end_cutoff is not None:
+            end_cutoff = end_cutoff.tz_localize(monthly.index.tz) if end_cutoff.tzinfo is None else end_cutoff.tz_convert(monthly.index.tz)
+    if start_cutoff is not None and end_cutoff is not None and start_cutoff > end_cutoff:
+        raise ValueError("evaluation_start_date must be on or before evaluation_end_date.")
+
     rows, audit = [], []
     equity = float(initial)
     previous_holdings: set[str] = set()
@@ -626,6 +643,10 @@ def run_monthly_backtest(
     start_idx = 12
     for i in range(start_idx, len(monthly) - 1):
         decision_date = monthly.index[i]
+        if start_cutoff is not None and decision_date < start_cutoff:
+            continue
+        if end_cutoff is not None and decision_date > end_cutoff:
+            continue
         cross = _build_monthly_cross_section(
             prices, decision_date,
             fundamentals_history if use_fundamentals else None,
