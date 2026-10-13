@@ -1071,6 +1071,160 @@ def industry_exposure_summary(
     ).reset_index(drop=True)
 
 
+def train_select_holdout_search(
+    prices: dict[str, pd.DataFrame],
+    min_score_candidates: tuple[float, ...] = (25.0, 35.0, 45.0),
+    hysteresis_candidates: tuple[float, ...] = (3.0, 7.0, 12.0),
+    train_fraction: float = 0.60,
+    min_train_months: int = 12,
+    min_holdout_months: int = 6,
+    **backtest_kwargs,
+) -> tuple[pd.DataFrame, dict[str, float], pd.DataFrame, dict[str, float]]:
+    """Select entry score/hysteresis using train-period Sharpe, then report only the chosen holdout.
+
+    The same fixed parameter set is run through historical time, using only past data
+    for each monthly signal. Candidate selection uses returns from the train segment
+    only. The chosen candidate's later holdout is reported separately; candidate holdout
+    metrics are intentionally not exposed to avoid tuning to the test period.
+
+    This is a single train/holdout parameter-selection test, not a full rolling
+    walk-forward optimizer. It does not correct survivorship bias or data-source errors.
+    """
+    if not prices:
+        raise ValueError("Price history is empty.")
+    if not (0.25 <= train_fraction <= 0.85):
+        raise ValueError("Train fraction must be between 25% and 85%.")
+    if min_train_months < 6 or min_holdout_months < 3:
+        raise ValueError("Require at least 6 training months and 3 holdout months.")
+    score_values = sorted(set(float(x) for x in min_score_candidates))
+    hysteresis_values = sorted(set(float(x) for x in hysteresis_candidates))
+    if not score_values or any(not np.isfinite(x) or x < 0 or x > 100 for x in score_values):
+        raise ValueError("Training score candidates must be finite values from 0 to 100.")
+    if not hysteresis_values or any(not np.isfinite(x) or x < 0 or x > 100 for x in hysteresis_values):
+        raise ValueError("Hysteresis candidates must be finite, non-negative values.")
+
+    candidate_curves: dict[tuple[float, float], pd.DataFrame] = {}
+    result_rows: list[dict[str, object]] = []
+    split_idx: int | None = None
+    for score in score_values:
+        for hysteresis in hysteresis_values:
+            config = {"min_score": score, "hysteresis": hysteresis}
+            row: dict[str, object] = {
+                "Min score": score,
+                "Hysteresis": hysteresis,
+                "Status": "OK",
+                "Train months": 0,
+                "Train CAGR": np.nan,
+                "Train Sharpe": np.nan,
+                "Train max drawdown": np.nan,
+                "Train turnover %": np.nan,
+            }
+            try:
+                curve, _, _ = run_monthly_backtest(
+                    prices=prices, **{**backtest_kwargs, **config}
+                )
+                if curve is None or curve.empty:
+                    row["Status"] = "Insufficient data"
+                    result_rows.append(row)
+                    continue
+                this_split = int(np.floor(len(curve) * train_fraction))
+                if this_split < min_train_months or len(curve) - this_split < min_holdout_months:
+                    row["Status"] = "Insufficient train/holdout history"
+                    result_rows.append(row)
+                    continue
+                # Require all candidates to use the same chronological split; different
+                # valid-curve lengths would otherwise make train scores incomparable.
+                if split_idx is None:
+                    split_idx = this_split
+                elif this_split != split_idx:
+                    row["Status"] = "Incomparable date coverage"
+                    result_rows.append(row)
+                    continue
+                train = curve.iloc[:this_split]
+                r = pd.to_numeric(train["Net return"], errors="coerce")
+                if r.isna().any():
+                    row["Status"] = "Missing training returns"
+                    result_rows.append(row)
+                    continue
+                total_factor = float(np.prod(1 + r.to_numpy()))
+                train_cagr = total_factor ** (12 / len(r)) - 1 if total_factor > 0 else np.nan
+                train_volatility = float(r.std(ddof=1) * np.sqrt(12)) if len(r) > 1 else np.nan
+                train_sharpe = float(r.mean() * 12 / train_volatility) if np.isfinite(train_volatility) and train_volatility > 0 else np.nan
+                equity = np.r_[1.0, np.cumprod(1 + r.to_numpy())]
+                drawdown = equity[1:] / np.maximum.accumulate(equity)[1:] - 1
+                row.update({
+                    "Train months": int(len(train)),
+                    "Train CAGR": float(train_cagr),
+                    "Train Sharpe": float(train_sharpe),
+                    "Train max drawdown": float(np.min(drawdown)),
+                    "Train turnover %": float(pd.to_numeric(train.get("Gross turnover", pd.Series(0, index=train.index)), errors="coerce").mean() * 100),
+                })
+                candidate_curves[(score, hysteresis)] = curve
+            except Exception as exc:
+                row["Status"] = "Failed"
+                row["Error"] = f"{type(exc).__name__}: {exc}"
+            result_rows.append(row)
+
+    table = pd.DataFrame(result_rows)
+    valid = table.loc[(table["Status"] == "OK") & table["Train Sharpe"].apply(lambda x: pd.notna(x) and np.isfinite(x))]
+    if valid.empty:
+        # Sharpe may be undefined for a constant return path; then use train CAGR only.
+        valid = table.loc[(table["Status"] == "OK") & table["Train CAGR"].apply(lambda x: pd.notna(x) and np.isfinite(x))]
+        selection_metric = "Train CAGR"
+    else:
+        selection_metric = "Train Sharpe"
+    if valid.empty or split_idx is None:
+        raise ValueError("No candidate had sufficient comparable data and a valid train-period objective.")
+    ranked = valid.sort_values(
+        [selection_metric, "Train CAGR", "Train turnover %", "Min score", "Hysteresis"],
+        ascending=[False, False, True, True, True],
+        kind="mergesort",
+    )
+    best_row = ranked.iloc[0]
+    best_config = {
+        "min_score": float(best_row["Min score"]),
+        "hysteresis": float(best_row["Hysteresis"]),
+        "training_objective": selection_metric,
+        "train_months": float(best_row["Train months"]),
+    }
+    table["Selected by train"] = (
+        table["Status"].eq("OK")
+        & table["Min score"].eq(best_config["min_score"])
+        & table["Hysteresis"].eq(best_config["hysteresis"])
+    )
+    selected_curve = candidate_curves[(best_config["min_score"], best_config["hysteresis"])]
+    holdout = selected_curve.iloc[split_idx:].copy()
+    initial = float(backtest_kwargs.get("initial", 10_000))
+    holdout_returns = pd.to_numeric(holdout["Net return"], errors="coerce")
+    holdout["Equity"] = initial * (1 + holdout_returns).cumprod()
+    benchmark_returns = pd.to_numeric(holdout.get("Benchmark return", pd.Series(index=holdout.index, dtype=float)), errors="coerce")
+    if benchmark_returns.notna().any():
+        holdout["Benchmark equity"] = initial * (1 + benchmark_returns.fillna(0)).cumprod()
+    total_factor = float(np.prod(1 + holdout_returns.to_numpy()))
+    holdout_cagr = total_factor ** (12 / len(holdout_returns)) - 1 if total_factor > 0 else np.nan
+    holdout_vol = float(holdout_returns.std(ddof=1) * np.sqrt(12)) if len(holdout_returns) > 1 else np.nan
+    holdout_sharpe = float(holdout_returns.mean() * 12 / holdout_vol) if np.isfinite(holdout_vol) and holdout_vol > 0 else np.nan
+    holdout_wealth = np.r_[1.0, np.cumprod(1 + holdout_returns.to_numpy())]
+    holdout_dd = holdout_wealth[1:] / np.maximum.accumulate(holdout_wealth)[1:] - 1
+    holdout_metrics: dict[str, float] = {
+        "Holdout months": float(len(holdout)),
+        "Holdout CAGR": float(holdout_cagr),
+        "Holdout volatility": float(holdout_vol),
+        "Holdout Sharpe (rf=0)": float(holdout_sharpe),
+        "Holdout max drawdown": float(np.min(holdout_dd)),
+        "Holdout final equity": float(holdout["Equity"].iloc[-1]),
+        "Holdout average turnover %": float(pd.to_numeric(holdout.get("Gross turnover", pd.Series(0, index=holdout.index)), errors="coerce").mean() * 100),
+    }
+    benchmark_good = benchmark_returns.dropna()
+    if len(benchmark_good) and float(np.prod(1 + benchmark_good.to_numpy())) > 0:
+        holdout_metrics["Holdout benchmark CAGR"] = float(np.prod(1 + benchmark_good.to_numpy()) ** (12 / len(benchmark_good)) - 1)
+        holdout_metrics["Holdout strategy CAGR aligned"] = float(
+            (1 + holdout_returns.loc[benchmark_good.index]).prod() ** (12 / len(benchmark_good)) - 1
+        )
+    best_config["train_score"] = float(best_row[selection_metric])
+    return table.sort_values(["Selected by train", selection_metric, "Train CAGR"], ascending=[False, False, False], na_position="last"), best_config, holdout, holdout_metrics
+
+
 def moving_block_bootstrap_uncertainty(
     curve: pd.DataFrame,
     initial: float = 10_000,
