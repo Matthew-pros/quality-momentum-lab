@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -46,9 +47,12 @@ def test_streamlit_home_and_tabs_render_without_live_network_calls(monkeypatch):
     monkeypatch.setattr(qlab.data, "download_market_data", _fake_market_data)
     st.cache_data.clear()
 
-    app = AppTest.from_file("app.py", default_timeout=40)
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=40)
     app.run()
 
     assert not app.exception, "\n".join(str(e.value) for e in app.exception)
-    assert any("Quality" in str(element.value) or "Quality" in str(element.label) for element in app.title)
-    assert len(app.tabs) >= 5
+    rendered_markdown = "\\n".join(str(element.value) for element in app.markdown)
+    assert "QUALITY MOMENTUM LAB" in rendered_markdown
+    rendered_subheaders = {str(element.value) for element in app.subheader}
+    assert "Screener a podkladové metriky" in rendered_subheaders
+    assert "Kontrola kvality dat" in rendered_subheaders
