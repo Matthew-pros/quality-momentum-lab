@@ -13,7 +13,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 
 
 SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -266,6 +265,17 @@ def download_market_data(
     ]
     if not symbols:
         return {}, pd.DataFrame(columns=report_columns)
+    try:
+        import yfinance as yf  # Optional developer-only adapter; not used by the public UI.
+    except ImportError:
+        return {}, pd.DataFrame([
+            {
+                "Ticker": ticker, "Status": "MISSING", "Rows": 0,
+                "First date": "", "Last date": "", "Missing %": 100.0,
+                "Message": "Optional yfinance package is not installed; use licensed OHLCV CSV instead.",
+            }
+            for ticker in symbols
+        ], columns=report_columns)
     raw = pd.DataFrame()
     batch_error = ""
     try:
