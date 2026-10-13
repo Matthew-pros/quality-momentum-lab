@@ -180,7 +180,13 @@ with st.sidebar:
         type=["csv"],
         key="ohlcv_csv",
         disabled=price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
-        help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume. Jedna řádka na ticker a datum."
+        help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume,Currency. Měna se nekonvertuje."
+    )
+    currency_confirm_usd = st.checkbox(
+        "Potvrzuji, že všechny importované ceny jsou v USD (včetně FX přepočtu)",
+        value=False,
+        disabled=is_demo_mode,
+        help="Použij jen tehdy, když CSV neuvádí sloupec Currency. Všechny ceny včetně zahraničních titulů musí být již přepočtené do USD. Pokud Currency obsahuje známou jinou měnu než USD, checkbox ji nepřebije."
     )
     universe_history_upload = st.file_uploader(
         "Historické složení investičního univerza (volitelné CSV)",
@@ -312,6 +318,11 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     except Exception as exc:
         st.error(f"Načítání cen selhalo: {type(exc).__name__}: {exc}")
         st.stop()
+if is_demo_mode:
+    for frame in price_data_all.values():
+        frame.attrs["currency"] = "USD"
+    if "Currency" not in price_report:
+        price_report["Currency"] = "USD"
 missing_investable_tickers = sorted(set(universe) - set(price_data_all))
 prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
 if not prices:
@@ -338,6 +349,41 @@ else:
         price_data_signature.update(ticker.encode("utf-8"))
         price_data_signature.update(pd.util.hash_pandas_object(frame, index=True).to_numpy(dtype="uint64").tobytes())
 price_data_signature = price_data_signature.hexdigest()
+
+currency_by_ticker = {
+    ticker: str(frame.attrs.get("currency", "UNKNOWN")).strip().upper() or "UNKNOWN"
+    for ticker, frame in price_data_all.items()
+}
+currency_unknown_tickers = sorted(
+    ticker for ticker in symbols
+    if ticker in price_data_all and currency_by_ticker.get(ticker, "UNKNOWN") == "UNKNOWN"
+)
+currency_non_usd = sorted({
+    currency_by_ticker[ticker]
+    for ticker in symbols
+    if ticker in price_data_all
+    and currency_by_ticker.get(ticker, "UNKNOWN") not in {"USD", "UNKNOWN", ""}
+})
+currency_ok = (
+    not currency_non_usd
+    and (not currency_unknown_tickers or currency_confirm_usd)
+    and not missing_investable_tickers
+)
+if currency_non_usd:
+    st.error(
+        "Portfolio a backtest jsou v USD, ale cenové řady obsahují ne-USD měny: "
+        + ", ".join(currency_non_usd)
+        + ". FX konverze není implementována. Před výpočtem převeď každou OHLC i adjusted cenu včetně benchmarku do USD a nastav Currency=USD."
+    )
+elif currency_unknown_tickers and not currency_confirm_usd:
+    st.warning(
+        "CSV neuvádí měnu pro všechny řady: " + ", ".join(currency_unknown_tickers)
+        + ". Screener zůstává dostupný, ale backtest a sizing jsou z bezpečnostních důvodů vypnuté, dokud nepotvrdíš, že všechny ceny včetně FX jsou v USD."
+    )
+elif missing_investable_tickers:
+    st.error("Portfolio analýza je vypnutá, protože chybí některé požadované cenové řady.")
+elif currency_unknown_tickers and currency_confirm_usd:
+    st.warning("Měna nebyla v CSV uvedena; pokračuješ na základě výslovného potvrzení, že všechny cenové řady už jsou v USD.")
 
 # Preserve source provenance in every downloadable data-quality report.
 price_source_label = "Deterministic synthetic DEMO" if is_demo_mode else "User-supplied OHLCV CSV"
