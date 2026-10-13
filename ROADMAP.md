@@ -1,4 +1,4 @@
-# Quality × Value × Momentum Lab — roadmap
+# Quality × Value × Momentum Lab — roadmap (research app v2.4.0)
 
 ## Finální cíl
 
@@ -53,7 +53,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat 60/20/20 chronologické diagnostické rozdělení Train / Validation / Holdout včetně benchmarku (není to automatizovaný walk-forward optimizer; holdout zůstává nedotčený jen tehdy, pokud se parametry podle něj neupravují).
 - [x] Přidat reprodukovatelný moving-block bootstrap pro orientační intervaly CAGR, Sharpe, max drawdown a konečné hodnoty; intervaly jsou diagnostické, nikoli garance statistického pokrytí.
 - [x] Přidat lokální grid min-score × hystereze, vybrat konfiguraci jen z tréninkového Sharpe a reportovat pozdější holdout pouze pro vítěznou konfiguraci; nejde o rolling walk-forward a opakované ladění podle holdoutu jej znehodnotí.
-- [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
+- [x] Přidat intervalový CSV import historického členství (Ticker/Start date/End date), validovat překryvy a chybějící OHLCV řady a filtrovat členy před cross-sectional percentile rankingem.
+- [ ] Získat nebo nezávisle ověřit úplný, licencovaný point-in-time security master včetně delistovaných titulů, symbolických změn a historických změn složení; uživatelský CSV import sám o sobě úplnost nedokazuje.
 - [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
 - [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
 - [x] Přidat expanding-window walk-forward: v každém foldu volit parametry pouze z minulých výnosů a reportovat jen vítěznou konfiguraci v neprolínajícím se OOS období. Každé OOS okno začíná s hotovostí a na konci účtuje modelovou likvidaci; nejde o nepřerušený broker účet.
