@@ -720,3 +720,19 @@ def test_czech_40m_securities_cap_is_only_flagged_for_tax_year_2025():
     assert "§38v notice" in status_by_year.loc[2024]
     assert "§38v notice" in status_by_year.loc[2025]
     assert "§38v notice" in status_by_year.loc[2026]
+
+
+def test_stop_variant_comparison_uses_same_common_settings_and_reports_failures_explicitly():
+    from qlab.strategy import compare_stop_variants
+
+    table = compare_stop_variants(
+        prices=synthetic_prices(1600),
+        stop_modes=("No stop / month-end rebalancing", "ATR trailing stop"),
+        top_n=2, cost_bps=0, initial=10_000, min_adx=0, min_score=0,
+        hysteresis=7, max_replacements=1, use_fundamentals=False,
+        weighting_method="Equal weight", stop_atr_multiple=3.0,
+    )
+    assert table["Stop mode"].tolist() == ["No stop / month-end rebalancing", "ATR trailing stop"]
+    assert table["Status"].eq("OK").all()
+    assert table["CAGR"].notna().all()
+    assert "Average holding days (closed positions)" in table.columns
