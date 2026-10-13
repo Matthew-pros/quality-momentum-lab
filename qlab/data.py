@@ -225,6 +225,77 @@ def download_market_data(
     return assess_price_quality(prices, report)
 
 
+def load_ohlcv_csv(
+    source,
+    expected_tickers: list[str] | None = None,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Load a user-supplied long-format OHLCV CSV without reaching an external price API.
+
+    Required columns: Date, Ticker, Open, High, Low, Close. Optional: Adj Close, Volume.
+    If Adj Close is absent, Close is used as a clearly documented non-dividend-adjusted proxy.
+    Duplicate ticker/date rows are rejected instead of being silently discarded.
+    """
+    try:
+        raw = source.copy() if isinstance(source, pd.DataFrame) else pd.read_csv(source)
+    except Exception as exc:
+        raise ValueError(f"Could not read the CSV: {type(exc).__name__}: {exc}") from exc
+    raw.columns = [str(col).strip() for col in raw.columns]
+    required = {"Date", "Ticker", "Open", "High", "Low", "Close"}
+    missing = required - set(raw.columns)
+    if missing:
+        raise ValueError(
+            "OHLCV CSV requires columns: Date, Ticker, Open, High, Low, Close. "
+            f"Missing: {', '.join(sorted(missing))}"
+        )
+    raw["Date"] = pd.to_datetime(raw["Date"], errors="coerce")
+    raw["Ticker"] = raw["Ticker"].astype(str).str.upper().str.strip()
+    if raw["Date"].isna().any():
+        raise ValueError("CSV contains one or more unparseable Date values.")
+    if raw["Ticker"].eq("").any():
+        raise ValueError("CSV contains an empty Ticker.")
+    for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+        if column in raw:
+            raw[column] = pd.to_numeric(raw[column], errors="coerce")
+    if "Adj Close" not in raw:
+        raw["Adj Close"] = raw["Close"]
+        adj_note = "Adj Close absent: momentum uses Close and does not include dividend adjustments."
+    else:
+        adj_note = ""
+    duplicate = raw.duplicated(["Ticker", "Date"], keep=False)
+    if duplicate.any():
+        samples = raw.loc[duplicate, ["Ticker", "Date"]].head(5)
+        items = ", ".join(f"{r.Ticker}@{pd.Timestamp(r.Date).date()}" for r in samples.itertuples(index=False))
+        raise ValueError(f"Duplicate ticker/date observations detected: {items}. Resolve duplicates in the CSV.")
+    prices: dict[str, pd.DataFrame] = {}
+    for ticker, part in raw.groupby("Ticker", sort=True):
+        part = part.sort_values("Date").set_index("Date")
+        fields = [column for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"] if column in part.columns]
+        frame = part[fields].copy()
+        frame = _add_adjusted_ohlc(frame)
+        prices[ticker] = frame
+
+    report_tickers = normalize_tickers(expected_tickers or list(prices))
+    report_rows = []
+    now = pd.Timestamp.now().normalize()
+    for ticker in report_tickers:
+        frame = prices.get(ticker)
+        if frame is None or frame.empty:
+            report_rows.append({
+                "Ticker": ticker, "Status": "MISSING", "Rows": 0, "First date": "", "Last date": "",
+                "Missing %": 100.0, "Message": "Ticker not present in uploaded CSV" + (f"; {adj_note}" if adj_note else ""),
+            })
+            continue
+        close = pd.to_numeric(frame["Close"], errors="coerce")
+        report_rows.append({
+            "Ticker": ticker, "Status": "OK", "Rows": int(close.notna().sum()),
+            "First date": frame.index.min().date().isoformat(), "Last date": frame.index.max().date().isoformat(),
+            "Missing %": round(float(close.isna().mean() * 100), 2),
+            "Message": adj_note,
+        })
+    report = pd.DataFrame(report_rows)
+    return assess_price_quality(prices, report, now=now)
+
+
 def sec_user_agent(email: str) -> str:
     return f"QualityMomentumLab/1.0 (https://github.com/Matthew-pros/quality-momentum-lab; contact: {email.strip()})"
 
