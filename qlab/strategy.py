@@ -90,6 +90,8 @@ def weighted_average(frame: pd.DataFrame, weights: dict[str, float], default=np.
 def score_cross_section(rows: pd.DataFrame, sentiment_enabled: bool = False, revisions_enabled: bool = False) -> pd.DataFrame:
     """Create factor scores. Each factor ranks only observed values in the same decision universe."""
     df = rows.copy()
+    sentiment_enabled = sentiment_enabled or ("Sentiment score" in df and df["Sentiment score"].notna().any())
+    revisions_enabled = revisions_enabled or ("Revision score" in df and df["Revision score"].notna().any())
     for col in [
         "ROE %", "Profit margin %", "FCF margin %", "Revenue growth %",
         "Earnings growth %", "FCF yield %", "P/E (annual EPS proxy)",
@@ -157,9 +159,11 @@ def score_cross_section(rows: pd.DataFrame, sentiment_enabled: bool = False, rev
         }, index=df.index), {"Base": 0.85, "Revisions": 0.15})
     fundamental_cols = ["ROE %", "Profit margin %", "FCF margin %", "Revenue growth %", "Earnings growth %", "FCF yield %"]
     df["Fundamental coverage %"] = df[fundamental_cols].notna().mean(axis=1) * 100
+    no_fundamentals = df["Fundamental coverage %"].fillna(0) <= 0
+    df.loc[no_fundamentals, "Fundamental/composite score"] = df.loc[no_fundamentals, "Technical score"]
     df["Score status"] = np.where(
         df["Fundamental coverage %"] >= 60, "Fundamentals + price",
-        np.where(df["Fundamental/composite score"].notna(), "Partial fundamentals / price", "Price-only score")
+        np.where(df["Fundamental coverage %"] > 0, "Partial fundamentals / price", "Price-only score")
     )
     below_low = df.get("Below 50d low", pd.Series(False, index=df.index)).fillna(False).astype(bool)
     breakout = df.get("Breakout55", pd.Series(False, index=df.index)).fillna(False).astype(bool)
@@ -234,11 +238,13 @@ def prepare_screener(
         scored = score_cross_section(df.assign(**{
             "FCF yield %": np.nan,
             "P/E (annual EPS proxy)": np.nan,
-        }))
+        }), sentiment_enabled="Sentiment score" in df and df["Sentiment score"].notna().any(),
+           revisions_enabled="Revision score" in df and df["Revision score"].notna().any())
         for column in ["Quality score", "Value score", "Growth score", "Momentum score", "Trend score", "Technical score", "Fundamental/composite score", "Fundamental coverage %", "Score status", "Signal"]:
             df[column] = scored[column]
     else:
-        df = score_cross_section(df)
+        df = score_cross_section(df, sentiment_enabled="Sentiment score" in df and df["Sentiment score"].notna().any(),
+                                 revisions_enabled="Revision score" in df and df["Revision score"].notna().any())
     return df
 
 
