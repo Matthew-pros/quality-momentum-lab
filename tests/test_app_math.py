@@ -649,3 +649,27 @@ def test_component_costs_sum_on_rebalance_and_stop_turnover():
     assert set(audit["Half-spread bps"]) == {4.0}
     assert set(audit["Slippage bps"]) == {6.0}
     assert set(audit["Cost bps"]) == {11.0}
+
+
+def test_adjusted_ohlc_prevents_false_split_jump_in_trend_and_stop_indicators():
+    from qlab.strategy import calculate_indicators
+
+    index = pd.bdate_range("2020-01-01", periods=320)
+    adjusted = pd.Series(100.0 + np.arange(len(index)) * 0.03, index=index)
+    raw = adjusted.copy()
+    # A 2-for-1 split cuts the raw quoted close in half; adjusted close remains continuous.
+    split_index = index[250]
+    raw.loc[index >= split_index] = raw.loc[index >= split_index] / 2.0
+    frame = pd.DataFrame({
+        "Open": raw * 0.999,
+        "High": raw * 1.01,
+        "Low": raw * 0.99,
+        "Close": raw,
+        "Adj Close": adjusted,
+        "Volume": 1_000_000,
+    }, index=index)
+    indicators = calculate_indicators(frame)
+    assert indicators.loc[split_index, "Close"] == pytest.approx(adjusted.loc[split_index])
+    assert indicators.loc[split_index, "Close raw"] == pytest.approx(raw.loc[split_index])
+    assert not bool(indicators.loc[split_index, "Below 50d low"])
+    assert indicators.loc[split_index, "ATR20%"] < 2.0
