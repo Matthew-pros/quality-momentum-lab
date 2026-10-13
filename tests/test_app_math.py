@@ -896,3 +896,66 @@ def test_train_only_parameter_search_rejects_insufficient_history():
             min_score=20,
             use_fundamentals=False,
         )
+
+
+def test_dcf_matches_closed_form_and_value_per_share_units():
+    from qlab.valuation import calculate_fcfe_dcf
+
+    fcf, growth, rate, terminal, years, shares = 100.0, 0.0, 0.10, 0.02, 5, 10.0
+    result = calculate_fcfe_dcf(fcf, growth, rate, terminal, years=years, shares_outstanding=shares)
+    pv_explicit = sum(fcf / ((1 + rate) ** year) for year in range(1, years + 1))
+    terminal_value = fcf * (1 + terminal) / (rate - terminal)
+    pv_terminal = terminal_value / ((1 + rate) ** years)
+    expected_equity = pv_explicit + pv_terminal
+
+    assert result["PV forecast FCF"] == pytest.approx(pv_explicit)
+    assert result["Terminal value at forecast horizon"] == pytest.approx(terminal_value)
+    assert result["PV terminal value"] == pytest.approx(pv_terminal)
+    assert result["Implied equity value"] == pytest.approx(expected_equity)
+    assert result["Implied value per share"] == pytest.approx(expected_equity / shares)
+    assert result["Terminal value share %"] == pytest.approx(pv_terminal / expected_equity * 100)
+
+
+def test_dcf_sensitivity_is_monotonic_for_positive_fcf_and_valid_rates():
+    from qlab.valuation import dcf_sensitivity
+
+    matrix = dcf_sensitivity(
+        base_fcf=100.0,
+        shares_outstanding=10.0,
+        growth_rates=[0.00, 0.05, 0.10],
+        discount_rates=[0.08, 0.10, 0.12],
+        terminal_growth_rate=0.02,
+        years=5,
+    ).set_index("FCF growth %")
+    discount_columns = [f"Cost of equity {rate:.1f}%" for rate in (8.0, 10.0, 12.0)]
+    # A faster FCF growth assumption raises value; a higher discount rate lowers value.
+    assert matrix.loc[5.0, discount_columns[0]] > matrix.loc[0.0, discount_columns[0]]
+    assert matrix.loc[10.0, discount_columns[1]] > matrix.loc[5.0, discount_columns[1]]
+    assert matrix.loc[5.0, discount_columns[0]] > matrix.loc[5.0, discount_columns[1]]
+    assert matrix.loc[5.0, discount_columns[1]] > matrix.loc[5.0, discount_columns[2]]
+
+
+def test_dcf_sensitivity_returns_nan_when_discount_rate_does_not_exceed_terminal_growth():
+    from qlab.valuation import dcf_sensitivity
+
+    matrix = dcf_sensitivity(
+        base_fcf=100.0,
+        shares_outstanding=10.0,
+        growth_rates=[0.03],
+        discount_rates=[0.02, 0.05],
+        terminal_growth_rate=0.02,
+        years=5,
+    )
+    assert pd.isna(matrix.loc[0, "Cost of equity 2.0%"])
+    assert np.isfinite(matrix.loc[0, "Cost of equity 5.0%"])
+
+
+def test_dcf_rejects_nonpositive_shares_invalid_rates_and_nonpositive_fcf():
+    from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
+
+    with pytest.raises(ValueError, match="positive for this simplified DCF"):
+        calculate_fcfe_dcf(0, 0.03, 0.10, 0.02)
+    with pytest.raises(ValueError, match="Shares outstanding must be positive"):
+        calculate_fcfe_dcf(100, 0.03, 0.10, 0.02, shares_outstanding=0)
+    with pytest.raises(ValueError, match="Shares outstanding must be positive"):
+        dcf_sensitivity(100, -5, [0.03], [0.10], 0.02)
