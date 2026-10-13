@@ -198,7 +198,6 @@ with st.sidebar:
         "Stáhnout šablonu členství CSV",
         membership_template.to_csv(index=False).encode("utf-8"),
         "universe_membership_template.csv", "text/csv",
-        disabled=is_demo_mode,
         help="Jedna řádka na interval členství; Start/End jsou včetně uvedeného dne, prázdný End date znamená otevřený interval."
     )
     st.caption("Point-in-time univerzum snižuje survivorship bias pouze tehdy, když CSV obsahuje úplné historické členství i OHLCV řady všech tehdejších titulů včetně delistovaných.")
