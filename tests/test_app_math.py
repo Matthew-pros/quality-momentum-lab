@@ -237,3 +237,25 @@ def test_sec_fact_filed_on_decision_date_is_deferred_to_avoid_close_time_leakage
     result = _annual_series(facts, ["Revenues"], "2023-02-15")
     assert len(result) == 1
     assert result.iloc[0] == 100
+
+
+def test_inverse_atr_weights_reduce_high_volatility_position_and_respect_cap():
+    from qlab.strategy import _target_weights
+
+    cross = pd.DataFrame({
+        "Ticker": ["LOWVOL", "HIGHVOL", "MIDVOL"],
+        "ATR20%": [1.0, 5.0, 2.0],
+    })
+    weights = _target_weights(["LOWVOL", "HIGHVOL", "MIDVOL"], cross, "Inverse ATR", 0.40)
+    assert weights["LOWVOL"] > weights["HIGHVOL"]
+    assert all(weight <= 0.40 + 1e-12 for weight in weights.values())
+    assert sum(weights.values()) == pytest.approx(1.0)
+
+
+def test_strict_position_cap_can_leave_residual_cash():
+    from qlab.strategy import _target_weights
+
+    cross = pd.DataFrame({"Ticker": ["A", "B", "C"], "ATR20%": [1.0, 1.0, 1.0]})
+    weights = _target_weights(["A", "B", "C"], cross, "Inverse ATR", 0.20)
+    assert all(weight <= 0.20 + 1e-12 for weight in weights.values())
+    assert sum(weights.values()) == pytest.approx(0.60)
