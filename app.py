@@ -279,6 +279,25 @@ if not prices:
     st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
     st.stop()
 
+# Preserve source provenance in every downloadable data-quality report.
+price_source_label = "Deterministic synthetic DEMO" if is_demo_mode else "User-supplied OHLCV CSV"
+source_filename = "" if is_demo_mode or price_csv_upload is None else price_csv_upload.name
+if "Price source" in price_report:
+    price_report = price_report.drop(columns=["Price source"])
+if "Source file" in price_report:
+    price_report = price_report.drop(columns=["Source file"])
+price_report.insert(0, "Price source", price_source_label)
+price_report.insert(1, "Source file", source_filename)
+if not is_demo_mode and price_csv_upload is not None:
+    no_adj_close = price_report.get("Message", pd.Series("", index=price_report.index)).fillna("").astype(str).str.contains("Adj Close absent")
+    price_report["Adjustment status"] = np.where(
+        no_adj_close,
+        "Close-only; dividend adjustment not included",
+        "Adj Close supplied; corporate-action basis not independently verified",
+    )
+else:
+    price_report["Adjustment status"] = "Synthetic adjusted series" if is_demo_mode else "Unknown"
+
 # ------------------------------- SEC facts --------------------------------
 fundamentals, sec_bundles, sec_errors = {}, {}, []
 valid_email = (not is_demo_mode) and "@" in sec_email and "." in sec_email.split("@")[-1]
@@ -938,8 +957,8 @@ with tab_data:
     st.subheader("Kontrola kvality dat")
     st.markdown("Chybná data vedou k sebejistým, ale chybným výsledkům. Proto je zde samostatný panel zdrojů a úplnosti.")
     data_cols = [c for c in [
-        "Ticker", "Status", "Quality", "Rows", "First date", "Last date",
-        "Calendar days stale", "Missing %", "Invalid price rows", "Max abs daily return %", "Message"
+        "Price source", "Source file", "Ticker", "Status", "Quality", "Rows", "First date", "Last date",
+        "Calendar days stale", "Missing %", "Invalid price rows", "Max abs daily return %", "Adjustment status", "Message"
     ] if c in price_report.columns]
     st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430, column_config={
         "Calendar days stale": st.column_config.NumberColumn(format="%.0f"),
