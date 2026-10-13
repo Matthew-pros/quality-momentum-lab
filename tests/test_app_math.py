@@ -1267,3 +1267,26 @@ def test_csv_price_adapter_requires_currency_for_all_rows_when_currency_column_i
     ]).to_csv(index=False).encode("utf-8")
     with pytest.raises(ValueError, match="Currency is blank on one or more rows"):
         load_ohlcv_csv(io.BytesIO(payload), expected_tickers=["AAA"])
+
+
+def test_usd_price_basis_gate_requires_usd_metadata_or_explicit_attestation():
+    from qlab.data import validate_usd_price_basis
+
+    assert validate_usd_price_basis(["AAA", "BBB"], {"AAA":"USD", "BBB":"USD"})["ready"]
+    unknown = validate_usd_price_basis(["AAA", "BBB"], {"AAA":"USD", "BBB":"UNKNOWN"})
+    assert not unknown["ready"]
+    assert unknown["unknown_tickers"] == ["BBB"]
+    attested = validate_usd_price_basis(
+        ["AAA", "BBB"], {"AAA":"USD", "BBB":"UNKNOWN"}, confirm_unknown_usd=True
+    )
+    assert attested["ready"]
+    mixed = validate_usd_price_basis(
+        ["AAA", "BBB"], {"AAA":"USD", "BBB":"EUR"}, confirm_unknown_usd=True
+    )
+    assert not mixed["ready"]
+    assert mixed["non_usd_currencies"] == ["EUR"]
+    missing = validate_usd_price_basis(
+        ["AAA", "DELISTED"], {"AAA":"USD"}, missing_tickers=["DELISTED"]
+    )
+    assert not missing["ready"]
+    assert missing["missing_tickers"] == ["DELISTED"]
