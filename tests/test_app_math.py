@@ -747,3 +747,22 @@ def test_fifo_rejects_currency_mismatch_instead_of_subtracting_incomparable_amou
     ])
     with pytest.raises(ValueError, match="Currency mismatch"):
         fifo_ledger(transactions)
+
+
+def test_synthetic_demo_prices_are_deterministic_and_explicitly_non_real():
+    from qlab.data import generate_demo_market_data
+
+    first, first_report = generate_demo_market_data(
+        ["SIM01", "SIM_BENCHMARK"], period="5y", now="2026-10-13"
+    )
+    second, second_report = generate_demo_market_data(
+        ["SIM01", "SIM_BENCHMARK"], period="5y", now="2026-10-13"
+    )
+    pd.testing.assert_frame_equal(first["SIM01"], second["SIM01"])
+    assert len(first["SIM01"]) >= 1200
+    assert first["SIM01"]["Close"].gt(0).all()
+    assert (first["SIM01"]["High"] >= first["SIM01"][["Open","Close"]].max(axis=1)).all()
+    assert (first["SIM01"]["Low"] <= first["SIM01"][["Open","Close"]].min(axis=1)).all()
+    assert first_report["Source"].eq("Synthetic demo").all()
+    assert first_report["Message"].str.contains("SYNTHETIC DEMO ONLY").all()
+    assert first_report["Quality"].eq("OK").all()
