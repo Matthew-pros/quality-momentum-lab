@@ -396,6 +396,7 @@ if all_screener.empty:
     st.stop()
 sector_map_all = all_screener.set_index("Ticker")["SIC group"].fillna("Unclassified").astype(str).to_dict() if "SIC group" in all_screener else {}
 screener = all_screener
+membership_screener_is_current = universe_history is None
 if universe_history is not None:
     last_observation_date = max(pd.Timestamp(frame.index.max()) for frame in prices.values() if not frame.empty)
     if last_observation_date.tzinfo is not None:
@@ -409,6 +410,7 @@ if universe_history is not None:
             "Historický backtest používá členství podle data každého signálu. Historické SIC klasifikace zůstávají nedostupné."
         )
     else:
+        membership_screener_is_current = False
         st.warning(
             f"Historický membership CSV nemá žádné aktivní členy k poslednímu datu cen ({last_observation_date.date()}). "
             "Screener zůstává jako historický přehled všech nahraných symbolů; nepoužívej ho jako seznam aktuálně obchodovatelných titulů."
@@ -421,12 +423,19 @@ st.markdown('<div class="qlab-subtitle">Výzkumné prostředí pro výběr akci�
 latest_price_date = max(frame.index.max() for frame in prices.values())
 stamp = pd.Timestamp(latest_price_date)
 age_days = (pd.Timestamp.now().normalize() - stamp.tz_localize(None).normalize()).days if stamp.tzinfo else (pd.Timestamp.now().normalize() - stamp.normalize()).days
-valid_current_fundamentals = sum(1 for t in fundamentals if fundamentals[t].get("Source") == "SEC EDGAR Company Facts" and fundamentals[t].get("Fundamental status") == "OK")
+screener_tickers = set(screener["Ticker"].astype(str))
+valid_current_fundamentals = sum(
+    1 for t in screener_tickers
+    if t in fundamentals and fundamentals[t].get("Source") == "SEC EDGAR Company Facts"
+    and fundamentals[t].get("Fundamental status") == "OK"
+)
 trend_count = int(screener["Trend OK"].fillna(False).sum())
 k1,k2,k3,k4 = st.columns(4)
-k1.metric("Akcie v univerzu", str(len(universe)), f"{len(prices)} cenových řad")
+universe_metric_label = "Členové screeneru" if universe_history is not None and membership_screener_is_current else "Tickery v datové sadě"
+universe_metric_delta = f"{len(universe)} historických tickerů" if universe_history is not None else f"{len(prices)} cenových řad"
+k1.metric(universe_metric_label, str(len(screener)), universe_metric_delta)
 k2.metric("Cenová data", stamp.date().isoformat(), "zdrojové datum")
-k3.metric("SEC fundamenty", f"{valid_current_fundamentals}/{len(universe)}", "úplnější snapshoty")
+k3.metric("SEC fundamenty", f"{valid_current_fundamentals}/{len(screener)}", "úplnější snapshoty aktuálního screeneru")
 k4.metric("V trendu", f"{trend_count}/{len(screener)}", "MA50 / MA200 / sklon MA200")
 if age_days > 7:
     st.warning(f"Pozor: poslední dostupná cena je stará {age_days} dní. Výsledek nemusí odrážet aktuální trh.")
