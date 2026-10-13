@@ -527,14 +527,22 @@ with tab_valuation:
     dcf_snapshot = fundamentals.get(dcf_ticker, {})
     dcf_row = screener.loc[screener["Ticker"] == dcf_ticker].iloc[0]
     sec_fcf = safe_float(dcf_snapshot.get("FCF"), 0.0)
-    sec_shares = safe_float(dcf_snapshot.get("Shares outstanding (reported)"), 1.0)
+    sec_shares = safe_float(dcf_snapshot.get("Shares outstanding (reported)"), 0.0)
     current_price = safe_float(dcf_row.get("Price"), 0.0)
-    revenue_growth = safe_float(dcf_snapshot.get("Revenue growth %"), 5.0)
+    growth_raw = dcf_snapshot.get("Revenue growth %")
+    has_revenue_growth = pd.notna(growth_raw) if growth_raw is not None else False
+    revenue_growth = safe_float(growth_raw, 0.0) if has_revenue_growth else 0.0
     default_growth = float(np.clip(revenue_growth, -20.0, 30.0))
     st.caption(
         f"Zdroj: {dcf_snapshot.get('Source', 'nenačteno')} · období: {dcf_snapshot.get('Financial period', '—') or '—'} · "
         f"poslední podání: {dcf_snapshot.get('Latest filing date', '—') or '—'}"
     )
+    if not has_revenue_growth:
+        st.info("SEC růst tržeb není dostupný. Výchozích 0 % pro růst FCF je pouze explicitní výchozí scénář, nikoli odhadovaný údaj.")
+    if sec_shares <= 0:
+        st.warning("SEC neposkytl použitelný počet akcií v oběhu. Pole níže začíná na 1 pouze kvůli validaci vstupu; nahraď jej ověřeným počtem akcií odpovídajícím stejné obchodované třídě a měně.")
+    if current_price <= 0:
+        st.warning("Pro zvolený titul není dostupná kladná cena. DCF lze počítat, ale nebude možné smysluplně porovnat hodnotu s trhem.")
     if sec_fcf <= 0:
         st.warning("V SEC snapshotu není k dispozici kladné roční FCF. Níže můžeš zadat vlastní normalizovanou hodnotu; negativní/kolísavé FCF není vhodné bez dalšího vysvětlení vložit do jednoduchého terminálního DCF.")
     input_left, input_right = st.columns(2)
