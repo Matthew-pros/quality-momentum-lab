@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 
@@ -469,6 +469,17 @@ with tab_strategy:
             title="CAGR při různých nákladech", template="plotly_dark")
         sensitivity_fig.update_layout(height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(sensitivity_fig, width="stretch")
+        st.markdown("#### Chronologická kontrola období")
+        period_summary = chronological_period_summary(curve, initial=capital)
+        st.dataframe(period_summary, width="stretch", hide_index=True, column_config={
+            "Total return": st.column_config.NumberColumn(format="percent"),
+            "CAGR": st.column_config.NumberColumn(format="percent"),
+            "Volatility": st.column_config.NumberColumn(format="percent"),
+            "Max drawdown": st.column_config.NumberColumn(format="percent"),
+            "Benchmark CAGR": st.column_config.NumberColumn(format="percent"),
+        })
+        st.download_button("Stáhnout rozdělení období CSV", period_summary.to_csv(index=False).encode("utf-8"), "chronological_period_summary.csv", "text/csv")
+        st.caption("Rozdělení je chronologické 60/20/20 (train/validation/holdout), se stejnými parametry a bez optimalizace uvnitř jednotlivých částí. Holdout je opravdu nedotčený pouze tehdy, pokud parametry neupravuješ podle jeho výsledku.")
         st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Náklady nezahrnují plně spread, skluz, FX a daňový model.")
 
 with tab_portfolio:
