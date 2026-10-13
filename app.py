@@ -1293,12 +1293,29 @@ with tab_data:
         sec_report = []
         for ticker in universe:
             record = fundamentals.get(ticker,{})
-            sec_report.append({"Ticker":ticker,"Source":record.get("Source","No SEC data"),
+            sec_report.append({
+                "Ticker":ticker,
+                "Source":record.get("Source","No SEC data"),
                 "SEC SIC":record.get("SEC SIC", ""),
                 "SEC SIC Description":record.get("SEC SIC Description", ""),
                 "SIC group":record.get("SIC group", "Unclassified"),
-                "Financial period":record.get("Financial period",""),"Latest filing date":record.get("Latest filing date",""),
-                "Fundamental status":record.get("Fundamental status","Not loaded"),"Data note":record.get("Data note","")})
+                "Financial period":record.get("Financial period",""),
+                "Latest filing date":record.get("Latest filing date",""),
+                "Revenue unit":record.get("Revenue unit",""),
+                "Net income unit":record.get("Net income unit",""),
+                "FCF unit":record.get("FCF unit",""),
+                "Equity unit":record.get("Equity unit",""),
+                "Price currency":record.get("Price currency","UNKNOWN"),
+                "Price / net-income unit match":record.get("Price / net-income unit match",False),
+                "Fundamental coverage %":record.get("Fundamental coverage %",np.nan),
+                "ROE %":record.get("ROE %",np.nan),
+                "Profit margin %":record.get("Profit margin %",np.nan),
+                "FCF margin %":record.get("FCF margin %",np.nan),
+                "P/E (annual EPS proxy)":record.get("P/E (annual EPS proxy",np.nan),
+                "FCF yield %":record.get("FCF yield %",np.nan),
+                "Fundamental status":record.get("Fundamental status","Not loaded"),
+                "Data note":record.get("Data note",""),
+            })
         st.markdown("#### Fundamentální zdroj a stáří výkazů")
         sec_df = pd.DataFrame(sec_report)
         st.dataframe(sec_df,width="stretch",hide_index=True)
