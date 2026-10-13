@@ -146,7 +146,11 @@ def score_cross_section(rows: pd.DataFrame, sentiment_enabled: bool = False, rev
     df["Fundamental/composite score"] = weighted_average(composite_parts, {
         "Quality": 0.27, "Value": 0.20, "Growth": 0.18, "Momentum": 0.22, "Trend": 0.13
     })
-    # Explicit optional input series: no hard-coded neutral sentiment/revision values.
+    fundamental_cols = ["ROE %", "Profit margin %", "FCF margin %", "Revenue growth %", "Earnings growth %", "FCF yield %"]
+    df["Fundamental coverage %"] = df[fundamental_cols].notna().mean(axis=1) * 100
+    no_fundamentals = df["Fundamental coverage %"].fillna(0) <= 0
+    df.loc[no_fundamentals, "Fundamental/composite score"] = df.loc[no_fundamentals, "Technical score"]
+    # Optional timestamped sources adjust the final base score but are never filled with neutral fakes.
     if sentiment_enabled and "Sentiment score" in df:
         df["Fundamental/composite score"] = weighted_average(pd.DataFrame({
             "Base": df["Fundamental/composite score"],
@@ -157,10 +161,6 @@ def score_cross_section(rows: pd.DataFrame, sentiment_enabled: bool = False, rev
             "Base": df["Fundamental/composite score"],
             "Revisions": _num(df["Revision score"]),
         }, index=df.index), {"Base": 0.85, "Revisions": 0.15})
-    fundamental_cols = ["ROE %", "Profit margin %", "FCF margin %", "Revenue growth %", "Earnings growth %", "FCF yield %"]
-    df["Fundamental coverage %"] = df[fundamental_cols].notna().mean(axis=1) * 100
-    no_fundamentals = df["Fundamental coverage %"].fillna(0) <= 0
-    df.loc[no_fundamentals, "Fundamental/composite score"] = df.loc[no_fundamentals, "Technical score"]
     df["Score status"] = np.where(
         df["Fundamental coverage %"] >= 60, "Fundamentals + price",
         np.where(df["Fundamental coverage %"] > 0, "Partial fundamentals / price", "Price-only score")
