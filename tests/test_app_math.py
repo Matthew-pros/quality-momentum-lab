@@ -736,3 +736,14 @@ def test_stop_variant_comparison_uses_same_common_settings_and_reports_failures_
     assert table["Status"].eq("OK").all()
     assert table["CAGR"].notna().all()
     assert "Average holding days (closed positions)" in table.columns
+
+
+def test_fifo_rejects_currency_mismatch_instead_of_subtracting_incomparable_amounts():
+    from qlab.tax_lots import fifo_ledger
+
+    transactions = pd.DataFrame([
+        {"Date":"2024-01-01","Ticker":"AAA","Type":"BUY","Quantity":10,"Price":100,"Fees":0,"Currency":"USD"},
+        {"Date":"2024-04-01","Ticker":"AAA","Type":"SELL","Quantity":10,"Price":3000,"Fees":0,"Currency":"CZK"},
+    ])
+    with pytest.raises(ValueError, match="Currency mismatch"):
+        fifo_ledger(transactions)
