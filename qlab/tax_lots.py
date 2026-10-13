@@ -1,0 +1,100 @@
+"""Tax-lot ledger utilities. Computes realized proceeds and cost basis, not statutory tax."""
+from __future__ import annotations
+
+from collections import defaultdict, deque
+import pandas as pd
+import numpy as np
+
+
+REQUIRED_COLUMNS = {"Date", "Ticker", "Type", "Quantity", "Price"}
+OPTIONAL_COLUMNS = {"Fees", "Currency"}
+
+
+def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = REQUIRED_COLUMNS - set(frame.columns)
+    if missing:
+        raise ValueError("Transaction file is missing columns: " + ", ".join(sorted(missing)))
+    out = frame.copy()
+    out["Date"] = pd.to_datetime(out["Date"], errors="coerce")
+    out["Ticker"] = out["Ticker"].astype(str).str.upper().str.strip()
+    out["Type"] = out["Type"].astype(str).str.upper().str.strip()
+    out["Quantity"] = pd.to_numeric(out["Quantity"], errors="coerce")
+    out["Price"] = pd.to_numeric(out["Price"], errors="coerce")
+    out["Fees"] = pd.to_numeric(out.get("Fees", 0.0), errors="coerce").fillna(0.0)
+    out["Currency"] = out.get("Currency", "USD")
+    if out["Date"].isna().any():
+        raise ValueError("One or more transaction dates could not be parsed.")
+    if not out["Type"].isin(["BUY", "SELL"]).all():
+        raise ValueError("Transaction Type must be BUY or SELL.")
+    if (out["Quantity"] <= 0).any() or (out["Price"] < 0).any() or (out["Fees"] < 0).any():
+        raise ValueError("Quantity must be > 0; price and fees cannot be negative.")
+    if out["Ticker"].eq("").any():
+        raise ValueError("Ticker cannot be empty.")
+    return out.sort_values(["Date"]).reset_index(drop=True)
+
+
+def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return realized trade matches, open lots, and annual realized P/L summaries in source currency."""
+    tx = normalize_transactions(frame)
+    if as_of is not None:
+        tx = tx.loc[tx["Date"] <= pd.Timestamp(as_of)]
+    lots = defaultdict(deque)
+    realized = []
+    for txrow in tx.to_dict("records"):
+        ticker = txrow["Ticker"]
+        qty = float(txrow["Quantity"])
+        price = float(txrow["Price"])
+        fees = float(txrow["Fees"])
+        fee_per_share = fees / qty
+        currency = str(txrow.get("Currency", "USD"))
+        if txrow["Type"] == "BUY":
+            lots[ticker].append({
+                "Ticker": ticker, "Acquisition date": txrow["Date"],
+                "Remaining quantity": qty, "Unit cost incl. fee": price + fee_per_share,
+                "Currency": currency,
+            })
+            continue
+        available = sum(lot["Remaining quantity"] for lot in lots[ticker])
+        if qty > available + 1e-9:
+            raise ValueError(
+                f"SELL {ticker} on {txrow['Date'].date()} exceeds FIFO inventory "
+                f"({qty:g} sold, {available:g} available). Short sales are not supported."
+            )
+        remaining = qty
+        while remaining > 1e-9:
+            lot = lots[ticker][0]
+            matched = min(remaining, lot["Remaining quantity"])
+            basis = matched * lot["Unit cost incl. fee"]
+            proceeds = matched * price - matched * fee_per_share
+            gain = proceeds - basis
+            days = (txrow["Date"] - lot["Acquisition date"]).days
+            realized.append({
+                "Ticker": ticker, "Sale date": txrow["Date"],
+                "Acquisition date": lot["Acquisition date"],
+                "Holding days": days, "Quantity matched": matched,
+                "Unit sale price": price, "Allocated sale fees": matched * fee_per_share,
+                "Cost basis incl. buy fees": basis, "Net proceeds": proceeds,
+                "Realized gain/loss": gain, "Currency": currency,
+            })
+            lot["Remaining quantity"] -= matched
+            remaining -= matched
+            if lot["Remaining quantity"] <= 1e-9:
+                lots[ticker].popleft()
+    open_rows = []
+    for ticker, queue in lots.items():
+        for lot in queue:
+            if lot["Remaining quantity"] > 1e-9:
+                row = dict(lot)
+                row["Holding days"] = (pd.Timestamp(as_of or tx["Date"].max()) - row["Acquisition date"]).days
+                row["Cost basis remaining"] = row["Remaining quantity"] * row["Unit cost incl. fee"]
+                open_rows.append(row)
+    realized_df = pd.DataFrame(realized)
+    open_df = pd.DataFrame(open_rows)
+    if realized_df.empty:
+        annual = pd.DataFrame(columns=["Year", "Ticker", "Currency", "Realized gain/loss", "Matched quantity"])
+    else:
+        realized_df["Year"] = realized_df["Sale date"].dt.year
+        annual = realized_df.groupby(["Year", "Ticker", "Currency"], as_index=False).agg(
+            **{"Realized gain/loss": ("Realized gain/loss", "sum"), "Matched quantity": ("Quantity matched", "sum")}
+        )
+    return realized_df, open_df, annual
