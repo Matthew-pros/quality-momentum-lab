@@ -864,6 +864,32 @@ def run_monthly_backtest(
     return curve, metrics, pd.DataFrame(audit)
 
 
+def compare_stop_variants(
+    prices: dict[str, pd.DataFrame],
+    stop_modes: tuple[str, ...],
+    **backtest_kwargs,
+) -> pd.DataFrame:
+    """Compare exit-rule variants with identical universe, factor and cost settings.
+
+    Each variant is independently simulated. This is intended for model diagnostics,
+    not for choosing a winner using the final holdout or as evidence of predictive edge.
+    """
+    rows = []
+    for mode in stop_modes:
+        row: dict[str, object] = {"Stop mode": mode, "Status": "OK", "Error": ""}
+        try:
+            _, metrics, _ = run_monthly_backtest(prices=prices, stop_mode=mode, **backtest_kwargs)
+            if metrics is None:
+                row["Status"] = "Insufficient data"
+            else:
+                row.update(metrics)
+        except Exception as exc:
+            row["Status"] = "Failed"
+            row["Error"] = f"{type(exc).__name__}: {exc}"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def cost_sensitivity(
     curve: pd.DataFrame,
     initial: float = 10_000,
