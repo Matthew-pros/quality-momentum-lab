@@ -1,403 +1,509 @@
-import streamlit as st
-import pandas as pd
+
+from __future__ import annotations
+
+import io
+import os
+from datetime import datetime, timezone
+
 import numpy as np
-import yfinance as yf
+import pandas as pd
 import plotly.express as px
-from datetime import date
+import plotly.graph_objects as go
+import streamlit as st
 
-st.set_page_config(page_title="Quality × Value × Momentum Lab", page_icon="📈", layout="wide")
+from qlab.data import download_market_data, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes
+from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
+from qlab.tax_lots import fifo_ledger
 
-DEFAULT_TICKERS = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,ASML,TSM,LLY,JNJ,AZN,NVO,RELX,OTIS,SPY,ACWI"
-BENCHMARKS = ["SPY", "ACWI", "QQQ"]
+APP_VERSION = "2.0.0"
+DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
+BENCHMARKS = ("SPY",)
+EXCLUDED_FUNDS = {"SPY", "ACWI", "QQQ", "VTI"}
+
+st.set_page_config(page_title="Quality Momentum Lab", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+st.markdown(
+    """
+    <style>
+    .stApp { background: radial-gradient(1100px 520px at 10% -5%, rgba(54,111,138,.24), transparent 65%), #0b1017; }
+    [data-testid="stSidebar"] { background: #0e1621; border-right: 1px solid rgba(142,166,191,.16); }
+    .block-container { padding-top: 1.6rem; padding-bottom: 3rem; max-width: 1500px; }
+    .qlab-eyebrow { color: #72e0c1; font-size: .76rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
+    .qlab-title { font-size: clamp(2rem, 4vw, 3.3rem); letter-spacing: -.045em; font-weight: 800; line-height: 1.05; margin: .3rem 0 .6rem 0; }
+    .qlab-subtitle { color: #b4c2d0; font-size: 1rem; max-width: 900px; line-height: 1.55; }
+    .qlab-panel { padding: 1rem 1.1rem; background: linear-gradient(135deg, rgba(25,39,54,.95), rgba(16,25,36,.92)); border: 1px solid rgba(151,180,204,.18); border-radius: 16px; }
+    .qlab-small { color: #92a4b7; font-size: .83rem; }
+    div[data-testid="stMetric"] { background: rgba(24,37,50,.72); border: 1px solid rgba(142,166,191,.15); border-radius: 14px; padding: .8rem 1rem; }
+    div[data-testid="stMetricLabel"] { color: #92a4b7; }
+    .stTabs [data-baseweb="tab-list"] { gap: .35rem; }
+    .stTabs [data-baseweb="tab"] { border-radius: 10px; padding: .55rem 1rem; }
+    div.stButton > button[kind="primary"] { background: #72e0c1; color: #09221d; border: 0; font-weight: 800; }
+    div.stButton > button { border-radius: 10px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_prices(tickers_text: str, period: str):
-    tickers = list(dict.fromkeys([x.strip().upper() for x in tickers_text.split(",") if x.strip()]))
-    raw = yf.download(tickers, period=period, auto_adjust=True, progress=False, group_by="column", threads=True)
-    if raw.empty:
-        return pd.DataFrame(), pd.DataFrame()
-    if isinstance(raw.columns, pd.MultiIndex):
-        if "Close" in raw.columns.get_level_values(0):
-            close = raw["Close"].copy()
-            volume = raw["Volume"].copy() if "Volume" in raw.columns.get_level_values(0) else pd.DataFrame(index=close.index)
-        else:
-            close = raw.xs("Close", axis=1, level=1)
-            volume = raw.xs("Volume", axis=1, level=1) if "Volume" in raw.columns.get_level_values(1) else pd.DataFrame(index=close.index)
-    else:
-        ticker = tickers[0]
-        close = raw[["Close"]].rename(columns={"Close": ticker})
-        volume = raw[["Volume"]].rename(columns={"Volume": ticker}) if "Volume" in raw else pd.DataFrame(index=close.index)
-    if isinstance(close, pd.Series):
-        close = close.to_frame()
-    if isinstance(volume, pd.Series):
-        volume = volume.to_frame()
-    return close.dropna(how="all"), volume
+def cached_market_data(symbols: tuple[str, ...], period: str):
+    return download_market_data(list(symbols), period)
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def load_info(ticker: str):
+def cached_sec_map(email: str):
+    return load_sec_ticker_map(email)
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def cached_sec_bundle(ticker: str, email: str, cik: int, title: str):
+    return load_sec_company_facts(ticker, email, {ticker: {"cik": int(cik), "title": title}})
+
+def _secret_email():
     try:
-        info = yf.Ticker(ticker).info
-        return info if isinstance(info, dict) else {}
+        value = st.secrets.get("SEC_CONTACT_EMAIL", "")
+        if value:
+            return str(value)
     except Exception:
-        return {}
+        pass
+    return os.environ.get("SEC_CONTACT_EMAIL", "")
 
-def safe_num(value):
-    try:
-        v = float(value)
-        return v if np.isfinite(v) else np.nan
-    except (TypeError, ValueError):
-        return np.nan
-
-def calc_adx(high, low, close, n=14):
-    up = high.diff()
-    down = -low.diff()
-    plus_dm = up.where((up > down) & (up > 0), 0.0)
-    minus_dm = down.where((down > up) & (down > 0), 0.0)
-    tr = pd.concat([(high-low), (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/n, min_periods=n, adjust=False).mean()
-    plus_di = 100 * plus_dm.ewm(alpha=1/n, min_periods=n, adjust=False).mean() / atr.replace(0, np.nan)
-    minus_di = 100 * minus_dm.ewm(alpha=1/n, min_periods=n, adjust=False).mean() / atr.replace(0, np.nan)
-    dx = 100 * (plus_di-minus_di).abs() / (plus_di+minus_di).replace(0, np.nan)
-    return dx.ewm(alpha=1/n, min_periods=n, adjust=False).mean(), atr
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_ohlc(ticker: str, period: str):
-    try:
-        df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df.dropna()
-    except Exception:
-        return pd.DataFrame()
-
-def technical_row(ticker, close, period):
-    ohlc = load_ohlc(ticker, period)
-    if ohlc.empty or "Close" not in ohlc:
+def _signals(uploaded, score_column):
+    if uploaded is None:
         return None
-    c = ohlc["Close"].dropna()
-    if len(c) < 220:
+    try:
+        return parse_signal_csv(io.BytesIO(uploaded.getvalue()), score_column)
+    except Exception as exc:
+        st.sidebar.error(f"Soubor {uploaded.name}: {exc}")
         return None
-    h = ohlc["High"].reindex(c.index)
-    l = ohlc["Low"].reindex(c.index)
-    adx, atr = calc_adx(h, l, c)
-    r_12_1 = c.iloc[-22] / c.iloc[-252] - 1 if len(c) >= 252 else np.nan
-    r_6_1 = c.iloc[-22] / c.iloc[-126] - 1 if len(c) >= 126 else np.nan
-    ma50 = c.rolling(50).mean().iloc[-1]
-    ma200 = c.rolling(200).mean().iloc[-1]
-    ma200_prev = c.rolling(200).mean().iloc[-21] if len(c) > 220 else np.nan
-    true_range = pd.concat([
-        (h - l),
-        (h - c.shift(1)).abs(),
-        (l - c.shift(1)).abs()
-    ], axis=1).max(axis=1)
-    atr20 = true_range.ewm(alpha=1/20, min_periods=20, adjust=False).mean()
-    high55 = h.shift(1).rolling(55).max().iloc[-1]
-    low50 = l.shift(1).rolling(50).min().iloc[-1]
-    price = c.iloc[-1]
-    return {
-        "Ticker": ticker, "Price": price, "12-1M": r_12_1, "6-1M": r_6_1,
-        "MA50": ma50, "MA200": ma200, "MA200 rising": bool(ma200 > ma200_prev) if pd.notna(ma200_prev) else False,
-        "ADX14": adx.iloc[-1], "ATR20%": (atr20.iloc[-1] / price * 100),
-        "Breakout55": bool(price > high55) if pd.notna(high55) else False,
-        "Below 50d low": bool(price < low50) if pd.notna(low50) else False,
-        "Trend OK": bool(price > ma200 and ma50 > ma200 and ma200 > ma200_prev) if pd.notna(ma200_prev) else False
-    }
 
-def percentile_score(series, higher_better=True):
-    """Cross-sectional percentile; missing observations remain missing."""
-    s = pd.to_numeric(series, errors="coerce")
-    observed = s.notna()
-    result = pd.Series(np.nan, index=s.index, dtype=float)
-    if observed.sum() == 0:
-        return result
-    if observed.sum() == 1:
-        result.loc[observed] = 50.0
-        return result
-    result.loc[observed] = s.loc[observed].rank(pct=True, ascending=higher_better) * 100
-    return result
+def _format_detail_dict(row):
+    out = {}
+    for key, value in row.items():
+        try:
+            if pd.isna(value):
+                out[str(key)] = ""
+                continue
+        except (TypeError, ValueError):
+            pass
+        out[str(key)] = str(value)
+    return out
 
+def _equity_chart(close, ma50=None, ma200=None, title="Cenový vývoj"):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=close.index, y=close.values, name="Close", line=dict(width=2.2, color="#72e0c1")))
+    if ma50 is not None:
+        fig.add_trace(go.Scatter(x=ma50.index, y=ma50.values, name="MA50", line=dict(width=1.3, color="#f6bd60")))
+    if ma200 is not None:
+        fig.add_trace(go.Scatter(x=ma200.index, y=ma200.values, name="MA200", line=dict(width=1.5, color="#e07a9a")))
+    fig.update_layout(title=title, template="plotly_dark", height=380, margin=dict(l=12,r=12,t=48,b=12),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_title=None,
+        yaxis_title="Cena v měně kotace", hovermode="x unified")
+    return fig
 
-def weighted_average(frame, weights, default=50.0):
-    """Row-wise weighted mean that does not treat missing data as a real score."""
-    numerator = pd.Series(0.0, index=frame.index)
-    denominator = pd.Series(0.0, index=frame.index)
-    for column, weight in weights.items():
-        values = pd.to_numeric(frame[column], errors="coerce")
-        valid = values.notna()
-        numerator.loc[valid] += values.loc[valid] * weight
-        denominator.loc[valid] += weight
-    result = numerator / denominator.replace(0, np.nan)
-    return result.fillna(default)
+def _daily_returns(frame):
+    col = "Adj Close" if "Adj Close" in frame else "Close"
+    return pd.to_numeric(frame[col], errors="coerce").dropna()
 
+def _make_fundamental_history(prices, bundles, use_estimated_value):
+    close_frame = pd.DataFrame({
+        ticker: frame["Adj Close"] if "Adj Close" in frame else frame["Close"]
+        for ticker, frame in prices.items() if not frame.empty
+    })
+    monthly_dates = list(close_frame.resample("ME").last().dropna(how="all").index)
+    histories = {}
+    for ticker, bundle in bundles.items():
+        if ticker not in prices or not monthly_dates:
+            continue
+        history = sec_snapshot_to_history(bundle, monthly_dates, prices[ticker]["Close"])
+        if not use_estimated_value:
+            for column in ["FCF yield %", "P/E (annual EPS proxy)"]:
+                if column in history:
+                    history[column] = np.nan
+        histories[ticker] = history
+    return histories
 
-def combine_percentiles(frame, features):
-    """Features are (column, weight, higher_is_better) tuples."""
-    ranked = pd.DataFrame(index=frame.index)
-    weights = {}
-    for column, weight, higher_better in features:
-        ranked[column] = percentile_score(frame[column], higher_better=higher_better)
-        weights[column] = weight
-    return weighted_average(ranked, weights)
+def _download_frame(prices):
+    series = []
+    for ticker, frame in prices.items():
+        if not frame.empty:
+            col = "Adj Close" if "Adj Close" in frame else "Close"
+            series.append(frame[col].rename(ticker))
+    return pd.concat(series, axis=1).sort_index() if series else pd.DataFrame()
 
-def get_fundamentals(ticker):
-    info = load_info(ticker)
-    return {
-        "Ticker": ticker,
-        "Company": info.get("shortName", ticker),
-        "Sector": info.get("sector", "Unknown"),
-        "Market cap": safe_num(info.get("marketCap")),
-        "P/E": safe_num(info.get("trailingPE")),
-        "Forward P/E": safe_num(info.get("forwardPE")),
-        "Price/Sales": safe_num(info.get("priceToSalesTrailing12Months")),
-        "ROE %": safe_num(info.get("returnOnEquity")) * 100 if info.get("returnOnEquity") is not None else np.nan,
-        "Debt/Equity": safe_num(info.get("debtToEquity")),
-        "FCF": safe_num(info.get("freeCashflow")),
-        "FCF margin %": (
-            safe_num(info.get("freeCashflow")) / safe_num(info.get("totalRevenue")) * 100
-            if pd.notna(safe_num(info.get("freeCashflow")))
-            and pd.notna(safe_num(info.get("totalRevenue")))
-            and safe_num(info.get("totalRevenue")) > 0 else np.nan
-        ),
-        "Profit margin %": safe_num(info.get("profitMargins")) * 100 if info.get("profitMargins") is not None else np.nan,
-        "Revenue growth %": safe_num(info.get("revenueGrowth")) * 100 if info.get("revenueGrowth") is not None else np.nan,
-        "Earnings growth %": safe_num(info.get("earningsGrowth")) * 100 if info.get("earningsGrowth") is not None else np.nan,
-        "Analyst target upside %": (safe_num(info.get("targetMeanPrice")) / safe_num(info.get("currentPrice")) - 1) * 100
-            if safe_num(info.get("targetMeanPrice")) and safe_num(info.get("currentPrice")) else np.nan,
-    }
-
-def run_monthly_backtest(close, top_n=5, cost_bps=10, initial=10000):
-    # Educational prototype: month-end ranking, next-month holding, long-only equal weight.
-    # Excludes historical fundamentals, delisted stocks, tax-lot treatment, and point-in-time universe.
-    px = close.dropna(axis=1, how="all").copy()
-    if len(px) < 300 or px.shape[1] < 2:
-        return None, None
-    monthly = px.resample("ME").last().dropna(how="all")
-    if len(monthly) < 14:
-        return None, None
-    rets = monthly.pct_change(fill_method=None)
-    rows = []
-    equity = initial
-    prev = set()
-    for i in range(13, len(monthly)):
-        # 12-1M momentum using month-end data, skipping latest month
-        mom12 = monthly.iloc[i-1] / monthly.iloc[i-12] - 1
-        mom6 = monthly.iloc[i-1] / monthly.iloc[i-6] - 1
-        trend = monthly.iloc[i-1] > monthly.iloc[max(0, i-12):i].mean()
-        score = (mom12.rank(pct=True) + mom6.rank(pct=True)) / 2
-        eligible = score[trend].dropna().sort_values(ascending=False)
-        picks = set(eligible.head(top_n).index)
-        if not picks:
-            picks = set()
-        old_weights = {ticker: 1.0 / len(prev) for ticker in prev} if prev else {}
-        new_weights = {ticker: 1.0 / len(picks) for ticker in picks} if picks else {}
-        traded_tickers = set(old_weights) | set(new_weights)
-        # Gross traded notional: buys + sells as a fraction of portfolio value.
-        turnover = sum(abs(new_weights.get(t, 0.0) - old_weights.get(t, 0.0)) for t in traded_tickers)
-        cost = turnover * cost_bps / 10000
-        selected_returns = rets.iloc[i].reindex(list(picks)) if picks else pd.Series(dtype=float)
-        # Explicitly keep equal weights if a selected name has a missing monthly return.
-        next_ret = selected_returns.fillna(0.0).mean() if picks else 0.0
-        strat_ret = (next_ret if pd.notna(next_ret) else 0.0) - cost
-        equity *= (1 + strat_ret)
-        rows.append({"Date": monthly.index[i], "Return": strat_ret, "Equity": equity, "Holdings": ", ".join(sorted(picks)), "Gross turnover": turnover})
-        prev = picks
-    if not rows:
-        return None, None
-    curve = pd.DataFrame(rows).set_index("Date")
-    years = len(curve) / 12.0
-    cagr = (curve["Equity"].iloc[-1] / initial) ** (1/years) - 1
-    vol = curve["Return"].std(ddof=1) * np.sqrt(12)
-    sharpe = (curve["Return"].mean() * 12) / vol if vol > 0 else np.nan
-    high_water = np.maximum.accumulate(np.r_[initial, curve["Equity"].to_numpy()])[1:]
-    dd = curve["Equity"] / high_water - 1
-    metrics = {
-        "CAGR": cagr, "Volatility": vol, "Sharpe (rf=0)": sharpe,
-        "Max drawdown": dd.min(), "Final equity": curve["Equity"].iloc[-1],
-        "Months": len(curve)
-    }
-    return curve, metrics
-
-st.title("Quality × Value × Momentum Lab")
-st.caption("Výzkumný prototyp pro screening akcií a základní backtest. Není to investiční doporučení.")
+# -------------------------------- Controls --------------------------------
 with st.sidebar:
-    st.header("Nastavení")
-    tickers_text = st.text_area("Ticker universe (oddělený čárkami)", DEFAULT_TICKERS, height=120)
+    st.markdown("### QUALITY MOMENTUM LAB")
+    st.caption(f"Research console · build {APP_VERSION}")
+    ticker_text = st.text_area("Investiční univerzum", DEFAULT_UNIVERSE, height=106)
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
-    st.caption("Pro 12–1M momentum a MA200 potřebujeme alespoň přibližně 1 rok dat; delší historie je vhodnější.")
+    st.caption("Ceny: Yahoo Finance přes neoficiální yfinance klient. Ověř podmínky poskytovatele pro veřejné použití.")
     st.divider()
-    st.subheader("Backtest")
+    st.subheader("SEC fundamenty")
+    sec_email = st.text_input("Kontaktní e-mail pro SEC EDGAR", value=_secret_email(),
+        help="Odesílá se v identifikační hlavičce User-Agent při požadavcích na SEC. Lze nastavit přes Streamlit secret SEC_CONTACT_EMAIL.")
+    use_estimated_value = st.checkbox("Použít orientační ocenění (P/E a FCF yield)", value=False,
+        help="Odhady používají poslední nahlášené akcie v oběhu × cenu; u ADR, dual-class akcií nebo zastaralého počtu akcií mohou být nepřesné.")
+    st.divider()
+    st.subheader("Pravidla portfolia")
     top_n = st.slider("Počet pozic", 3, 15, 5)
-    cost_bps = st.slider("Náklady na změnu portfolia (bps)", 0, 100, 15, 5)
-    initial = st.number_input("Počáteční kapitál (USD)", min_value=1000, value=10000, step=1000)
-    run_button = st.button("Načíst data a přepočítat", type="primary")
+    min_adx = st.slider("Minimální ADX", 0, 40, 10)
+    min_score = st.slider("Minimální vstupní skóre", 0, 80, 35)
+    hysteresis = st.slider("Hystereze skóre", 0, 25, 7, help="Nová akcie musí být lepší o tento počet bodů, aby vytlačila stávající pozici.")
+    max_replacements = st.slider("Max. výměn za rebalancování", 0, 15, 2)
+    breakout_filter = st.selectbox("Vstupní průraz", ["None", "20-day", "55-day"], index=0)
+    cost_bps = st.slider("Náklady na zobchodovaný objem (bps)", 0, 100, 15, 5)
+    st.divider()
+    capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
+    risk_budget_pct = st.slider("Riziko na pozici (% kapitálu)", 0.1, 2.0, 0.5, 0.1)
+    stop_atr = st.slider("Stop distance (× ATR20)", 1.0, 5.0, 3.0, 0.5)
+    max_position_pct = st.slider("Max. váha pozice (%)", 5, 40, 20, 1)
+    max_exposure_pct = st.slider("Max. celková expozice (%)", 25, 100, 95, 5)
+    st.divider()
+    st.subheader("Časované doplňkové signály")
+    sentiment_upload = st.file_uploader("Sentiment CSV (0–100)", type=["csv"], key="sentiment_csv")
+    revision_upload = st.file_uploader("Revize odhadů CSV (0–100)", type=["csv"], key="revision_csv")
+    st.caption("Požadované sloupce: Date, Ticker, Sentiment score / Revision score, Source je volitelný.")
+    if st.button("Obnovit všechna data", type="primary", width="stretch"):
+        st.cache_data.clear()
+        st.session_state.pop("backtest_result", None)
+        st.rerun()
 
-if "run" not in st.session_state:
-    st.session_state.run = True
-if run_button:
-    st.cache_data.clear()
-    st.session_state.run = True
+universe = [x for x in dict.fromkeys(s.strip().upper() for s in ticker_text.split(",") if s.strip()) if x not in EXCLUDED_FUNDS]
+if len(universe) < 2:
+    st.error("Zadej alespoň dvě akcie. Benchmarková ETF SPY/ACWI/QQQ/VTI se automaticky vyřazují z investičního univerza.")
+    st.stop()
+symbols = tuple(dict.fromkeys(universe + list(BENCHMARKS)))
+sentiment_df = _signals(sentiment_upload, "Sentiment score")
+revision_df = _signals(revision_upload, "Revision score")
+sentiment_latest = latest_signals(sentiment_df, "Sentiment score") if sentiment_df is not None else {}
+revision_latest = latest_signals(revision_df, "Revision score") if revision_df is not None else {}
+optional_latest = {}
+for ticker in set(sentiment_latest) | set(revision_latest):
+    merged = {}
+    merged.update(sentiment_latest.get(ticker, {}))
+    merged.update(revision_latest.get(ticker, {}))
+    optional_latest[ticker] = merged
 
-if st.session_state.run:
-    tickers = list(dict.fromkeys([x.strip().upper() for x in tickers_text.split(",") if x.strip()]))
-    if len(tickers) < 2:
-        st.error("Zadej alespoň dva tickery.")
+with st.spinner("Načítám cenová data v dávce, bez paralelních požadavků…"):
+    try:
+        price_data_all, price_report = cached_market_data(symbols, period)
+    except Exception as exc:
+        st.error(f"Stahování cen selhalo: {type(exc).__name__}: {exc}")
         st.stop()
-    with st.spinner("Načítám cenová data… bezplatné zdroje mohou občas odpovídat pomalu."):
-        close, volume = load_prices(tickers_text, period)
-    if close.empty:
-        st.error("Data se nepodařilo načíst. Zkontroluj tickery nebo to zkus později.")
-        st.stop()
+prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
+if not prices:
+    st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
+    st.stop()
 
-    latest_data_date = close.dropna(how="all").index.max()
-    price_qc_rows = []
-    for ticker in tickers:
-        values = close[ticker].dropna() if ticker in close.columns else pd.Series(dtype=float)
-        price_qc_rows.append({
-            "Ticker": ticker,
-            "Rows with price": int(values.notna().sum()),
-            "First date": values.index.min().date().isoformat() if not values.empty else None,
-            "Last date": values.index.max().date().isoformat() if not values.empty else None,
-            "Missing price series": values.empty
-        })
-    price_qc = pd.DataFrame(price_qc_rows)
-    st.caption(
-        f"Kontrola cenových dat: poslední dostupné datum {latest_data_date.date().isoformat()} · "
-        f"řady s cenami {int((~price_qc['Missing price series']).sum())}/{len(tickers)} · "
-        "zdroj Yahoo Finance přes yfinance"
-    )
-    with st.expander("Kontrola úplnosti cenových dat"):
-        st.dataframe(price_qc, use_container_width=True, hide_index=True)
-        missing_tickers = price_qc.loc[price_qc["Missing price series"], "Ticker"].tolist()
-        if missing_tickers:
-            st.warning("Chybí cenová řada pro: " + ", ".join(missing_tickers))
-        st.download_button(
-            "Stáhnout kontrolu cenových dat CSV",
-            price_qc.to_csv(index=False).encode("utf-8"),
-            "price_data_quality.csv",
-            "text/csv"
-        )
-
-    tab1, tab2, tab3 = st.tabs(["🔎 Screener", "📉 Backtest (experimentální)", "📚 Data & metodika"])
-    with tab1:
-        st.subheader("Technické a fundamentální skóre")
-        st.info("Fundamentální údaje z Yahoo Finance jsou orientační aktuální snapshot, nikoli point-in-time historická data. Proto se v tomto MVP nepoužívají k simulaci historických nákupů.")
-        prog = st.progress(0)
-        rows = []
-        for i, ticker in enumerate(tickers):
+# ------------------------------- SEC facts --------------------------------
+fundamentals, sec_bundles, sec_errors = {}, {}, []
+valid_email = "@" in sec_email and "." in sec_email.split("@")[-1]
+if valid_email:
+    try:
+        sec_map = cached_sec_map(sec_email.strip())
+        missing_map = [t for t in universe if t not in sec_map and t not in EXCLUDED_FUNDS]
+        valid_tickers = [t for t in universe if t in sec_map and t not in EXCLUDED_FUNDS]
+        progress = st.progress(0, text="Načítám SEC EDGAR fundamentals…")
+        for idx, ticker in enumerate(valid_tickers):
             try:
-                tech = technical_row(ticker, close, period)
-                fund = get_fundamentals(ticker)
-                if tech:
-                    rows.append({**fund, **tech})
-            except Exception:
-                pass
-            prog.progress((i+1)/len(tickers))
-        if not rows:
-            st.warning("Nedostatek dat pro výpočet indikátorů. Zkus delší historii nebo jiné tickery.")
-        else:
-            df = pd.DataFrame(rows)
-            df["_Forward P/E positive"] = df["Forward P/E"].where(df["Forward P/E"] > 0)
-            df["_Price/Sales positive"] = df["Price/Sales"].where(df["Price/Sales"] > 0)
-            df["Momentum score"] = combine_percentiles(df, [
-                ("12-1M", 0.5, True), ("6-1M", 0.5, True)
-            ])
-            df["Quality proxy"] = combine_percentiles(df, [
-                ("ROE %", 0.25, True),
-                ("Profit margin %", 0.25, True),
-                ("FCF margin %", 0.25, True),
-                ("Revenue growth %", 0.25, True)
-            ])
-            # Positive valuation multiples only; negative P/E is not treated as "cheap".
-            df["Value proxy"] = combine_percentiles(df, [
-                ("_Forward P/E positive", 0.6, False),
-                ("_Price/Sales positive", 0.4, False)
-            ])
-            df["Growth proxy"] = combine_percentiles(df, [
-                ("Revenue growth %", 0.5, True),
-                ("Earnings growth %", 0.5, True)
-            ])
-            df["Trend score"] = np.where(
-                df["Trend OK"],
-                50 + df["ADX14"].clip(0, 50).fillna(0),
-                0
-            )
-            score_parts = pd.DataFrame({
-                "Quality": df["Quality proxy"],
-                "Value": df["Value proxy"],
-                "Growth": df["Growth proxy"],
-                "Momentum": df["Momentum score"],
-                "Trend": df["Trend score"]
-            }, index=df.index)
-            df["Composite score"] = weighted_average(score_parts, {
-                "Quality": 0.28, "Value": 0.22, "Growth": 0.18,
-                "Momentum": 0.22, "Trend": 0.10
-            })
-            fundamental_columns = [
-                "ROE %", "Profit margin %", "FCF margin %",
-                "Revenue growth %", "Earnings growth %", "Forward P/E", "Price/Sales"
-            ]
-            df["Fundamental coverage %"] = df[fundamental_columns].notna().mean(axis=1) * 100
-            df["Fundamental status"] = np.where(
-                df["Fundamental coverage %"] >= 70, "Adequate snapshot",
-                np.where(df["Fundamental coverage %"] >= 40, "Partial data", "Low coverage")
-            )
-            df["Signal"] = np.select(
-                [df["Below 50d low"], df["Trend OK"] & df["Breakout55"] & (df["Composite score"] >= 65), df["Trend OK"]],
-                ["Review / exit trigger", "Breakout candidate", "Trend: watch"],
-                default="No entry"
-            )
-            display_cols = ["Ticker","Company","Sector","Price","Composite score","Quality proxy","Value proxy","Growth proxy","Momentum score","Fundamental coverage %","Fundamental status","12-1M","6-1M","ADX14","ATR20%","Trend OK","Breakout55","P/E","Forward P/E","ROE %","FCF margin %","Signal"]
-            display_cols = [c for c in display_cols if c in df.columns]
-            shown = df.sort_values("Composite score", ascending=False)[display_cols].copy()
-            st.dataframe(shown, use_container_width=True, hide_index=True, column_config={
-                "Price": st.column_config.NumberColumn(format="$%.2f"),
-                "Composite score": st.column_config.NumberColumn(format="%.1f"),
-                "Quality proxy": st.column_config.NumberColumn(format="%.1f"),
-                "Value proxy": st.column_config.NumberColumn(format="%.1f"),
-                "Momentum score": st.column_config.NumberColumn(format="%.1f"),
-                "12-1M": st.column_config.NumberColumn(format="%.1%"),
-                "6-1M": st.column_config.NumberColumn(format="%.1%"),
-                "ADX14": st.column_config.NumberColumn(format="%.1f"),
-                "ATR20%": st.column_config.NumberColumn(format="%.1f%%"),
-            })
-            st.download_button("Stáhnout screener CSV", df.to_csv(index=False).encode("utf-8"), "screener.csv", "text/csv")
-            chosen = st.selectbox("Detail akcie", df["Ticker"].tolist())
-            ohlc = load_ohlc(chosen, period)
-            if not ohlc.empty:
-                chart = px.line(ohlc, y="Close", title=f"{chosen} — adjusted close")
-                st.plotly_chart(chart, use_container_width=True)
-                st.write(df[df["Ticker"] == chosen].T.rename(columns={df[df["Ticker"] == chosen].index[0]: "Value"}))
+                issuer = sec_map[ticker]
+                bundle = cached_sec_bundle(ticker, sec_email.strip(), int(issuer["cik"]), str(issuer["title"]))
+                sec_bundles[ticker] = bundle
+                raw_close = prices[ticker]["Close"].dropna() if ticker in prices else pd.Series(dtype=float)
+                last_price = float(raw_close.iloc[-1]) if not raw_close.empty else np.nan
+                fundamentals[ticker] = sec_fundamental_snapshot(bundle, datetime.now(timezone.utc).date(), last_price)
+            except Exception as exc:
+                sec_errors.append({"Ticker": ticker, "Error": f"{type(exc).__name__}: {exc}"})
+            progress.progress((idx + 1) / max(1, len(valid_tickers)), text=f"SEC data: {idx + 1}/{len(valid_tickers)}")
+        progress.empty()
+        for ticker in missing_map:
+            fundamentals[ticker] = {"Ticker": ticker, "Company": ticker, "Fundamental status": "No SEC mapping", "Data note": "Ticker not found in SEC company ticker map."}
+    except Exception as exc:
+        st.warning(f"SEC EDGAR se nepodařilo načíst: {type(exc).__name__}: {exc}. Screener poběží v režimu cenových dat.")
+else:
+    st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
 
-    with tab2:
-        st.subheader("Základní měsíční momentum backtest")
-        st.warning("Tento test je pouze prototyp: používá současný seznam tickerů, postrádá historické delistované firmy a point-in-time fundamenty, a nezohledňuje daně. Náklady v bps se aplikují na hrubě obchodovaný objem (nákupy + prodeje). Výsledky nejsou důkazem obchodovatelnosti.")
-        curve, metrics = run_monthly_backtest(close, top_n=top_n, cost_bps=cost_bps, initial=initial)
-        if curve is None:
-            st.warning("Nedostatek dat pro backtest. Zvol delší historii a širší seznam tickerů.")
-        else:
-            c1,c2,c3,c4 = st.columns(4)
-            c1.metric("CAGR", f"{metrics['CAGR']:.1%}")
-            c2.metric("Sharpe (rf=0)", f"{metrics['Sharpe (rf=0)']:.2f}")
-            c3.metric("Max drawdown", f"{metrics['Max drawdown']:.1%}")
-            c4.metric("Konečná hodnota", f"${metrics['Final equity']:,.0f}")
-            st.plotly_chart(px.line(curve, y="Equity", title="Equity curve"), use_container_width=True)
-            st.dataframe(curve, use_container_width=True)
-            st.download_button("Stáhnout equity curve CSV", curve.to_csv().encode("utf-8"), "backtest_equity.csv", "text/csv")
-    with tab3:
-        st.subheader("Datové zdroje a limity")
-        st.markdown("""
-        **Použité zdroje**
-        - **Yahoo Finance přes `yfinance`** — historické ceny a orientační aktuální základní metriky. `yfinance` je neoficiální open-source klient a jeho dokumentace uvádí, že Yahoo data jsou určena pro osobní použití; ověř podmínky užití pro konkrétní nasazení.
-        - **Bez API klíče** — technické indikátory se počítají lokálně z OHLC dat.
-        - **Další fáze: SEC EDGAR Company Facts** pro americké firmy a oficiální výkazy; vyžaduje správné mapování tickerů/CIK a respektování limitů.
-        - **Volitelně FMP nebo Alpha Vantage** — bezplatné limity se mohou měnit a nejsou vhodné pro neomezené skenování velkého globálního univerza.
+screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
+if screener.empty:
+    st.error("Z cenových dat se nepodařilo vytvořit screener.")
+    st.stop()
 
-        **Důležité metodické limity**
-        1. Aktuální fundamenty nesmí být použity v historickém backtestu jako by byly známy tehdy.
-        2. Současný seznam tickerů vytváří survivorship bias.
-        3. Sociální sentiment a analytické revize nejsou v této první verzi zahrnuty.
-        4. Daň není zahrnuta do výsledků backtestu. Pro českého daňového rezidenta je potřeba lot-level evidence a přesná implementace aktuálních daňových pravidel.
-        5. Cenová data a jejich dostupnost se mohou měnit; ověř práva k použití a případnou možnost redistribuce.
+# ------------------------------ Main header ------------------------------
+st.markdown('<div class="qlab-eyebrow">Systematic equity research · v2</div>', unsafe_allow_html=True)
+st.markdown('<div class="qlab-title">Quality × Value × Momentum</div>', unsafe_allow_html=True)
+st.markdown('<div class="qlab-subtitle">Výzkumné prostředí pro výběr akcií, dlouhodobé momentum, fundamentální kvalitu a řízení obratu portfolia. Důraz je na dohledatelných zdrojích, časové správnosti a výsledcích po nákladech — nikoli na falešné přesnosti.</div>', unsafe_allow_html=True)
+latest_price_date = max(frame.index.max() for frame in prices.values())
+stamp = pd.Timestamp(latest_price_date)
+age_days = (pd.Timestamp.now().normalize() - stamp.tz_localize(None).normalize()).days if stamp.tzinfo else (pd.Timestamp.now().normalize() - stamp.normalize()).days
+valid_current_fundamentals = sum(1 for t in fundamentals if fundamentals[t].get("Source") == "SEC EDGAR Company Facts" and fundamentals[t].get("Fundamental status") == "OK")
+trend_count = int(screener["Trend OK"].fillna(False).sum())
+k1,k2,k3,k4 = st.columns(4)
+k1.metric("Akcie v univerzu", str(len(universe)), f"{len(prices)} cenových řad")
+k2.metric("Cenová data", stamp.date().isoformat(), "zdrojové datum")
+k3.metric("SEC fundamenty", f"{valid_current_fundamentals}/{len(universe)}", "úplnější snapshoty")
+k4.metric("V trendu", f"{trend_count}/{len(screener)}", "MA50 / MA200 / sklon MA200")
+if age_days > 7:
+    st.warning(f"Pozor: poslední dostupná cena je stará {age_days} dní. Výsledek nemusí odrážet aktuální trh.")
+if sec_errors:
+    with st.expander(f"Chyby SEC načítání ({len(sec_errors)})"):
+        st.dataframe(pd.DataFrame(sec_errors), width="stretch", hide_index=True)
+if not use_estimated_value:
+    st.info("Valuační skóre je ve výchozím nastavení vypnuté: kapitalizace odvozená z posledního nahlášeného počtu akcií nemusí odpovídat obchodované třídě/ADR. Zapnutí používá P/E a FCF yield jako orientační odhady.")
+if sentiment_df is None and revision_df is None:
+    st.caption("Sentiment a revize analytických odhadů jsou vypnuté, dokud není přiložen historicky časovaný zdroj.")
 
-        **Doporučené použití:** screening a výzkumný prototyp, ne automatické zadávání pokynů ani tvrzení o očekávaném výnosu.
-        """)
+tab_overview, tab_screener, tab_strategy, tab_portfolio, tab_data, tab_method = st.tabs([
+    "Přehled", "Screener", "Strategie & backtest", "Portfolio & loty", "Kvalita dat", "Metodika"
+])
+
+with tab_overview:
+    left,right = st.columns([1.3,1])
+    with left:
+        st.subheader("Kandidáti podle skóre")
+        best = screener.sort_values("Fundamental/composite score", ascending=False, na_position="last").head(10)
+        fig = px.bar(best.sort_values("Fundamental/composite score", ascending=True), x="Fundamental/composite score", y="Ticker",
+            orientation="h", title="Composite score (0–100)", template="plotly_dark",
+            color="Fundamental/composite score", color_continuous_scale=["#243347","#438b91","#72e0c1"])
+        fig.update_layout(height=430, margin=dict(l=10,r=10,t=45,b=10), coloraxis_showscale=False,
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig, width="stretch")
+    with right:
+        st.subheader("Signály")
+        st.dataframe(screener["Signal"].value_counts().rename_axis("Signal").reset_index(name="Počet"), width="stretch", hide_index=True)
+        p1,p2 = st.columns(2)
+        p1.metric("Pokrytí fundamenty", f"{screener['Fundamental coverage %'].mean():.0f}%")
+        p2.metric("Breakout 55 dní", str(int(screener["Breakout55"].fillna(False).sum())))
+        st.markdown('<div class="qlab-panel"><b>Interpretace skóre</b><br><span class="qlab-small">Skóre je relativní pořadí uvnitř právě načteného univerza, nikoli očekávaný výnos. Chybějící fundamenty se nemění na neutrální hodnoty.</span></div>', unsafe_allow_html=True)
+
+with tab_screener:
+    st.subheader("Screener a podkladové metriky")
+    search_col,signal_col,trend_col = st.columns([1.2,1,1])
+    search = search_col.text_input("Filtrovat ticker nebo název", "")
+    signal_options = ["Vše"] + sorted(screener["Signal"].dropna().astype(str).unique().tolist())
+    signal_filter = signal_col.selectbox("Signál", signal_options, index=0)
+    trend_filter = trend_col.selectbox("Trend", ["Vše","Pouze Trend OK","Pouze mimo trend"], index=0)
+    shown = screener.copy()
+    if search:
+        shown = shown[shown["Ticker"].str.contains(search.upper(), na=False) | shown["Company"].astype(str).str.contains(search, case=False, na=False)]
+    if signal_filter != "Vše":
+        shown = shown[shown["Signal"] == signal_filter]
+    if trend_filter == "Pouze Trend OK":
+        shown = shown[shown["Trend OK"]]
+    elif trend_filter == "Pouze mimo trend":
+        shown = shown[~shown["Trend OK"]]
+    display_cols = [
+        "Ticker","Company","Price","Fundamental/composite score","Technical score","Quality score","Value score",
+        "Growth score","Momentum score","Fundamental coverage %","Fundamental status","ROE %","Profit margin %",
+        "FCF margin %","Revenue growth %","Earnings growth %","FCF yield %","Momentum 12-1M","Momentum 6-1M",
+        "ADX14","ATR20%","Breakout20","Breakout55","Trend OK","Below 50d low","Signal","Price date","Latest filing date"
+    ]
+    display_cols = [c for c in display_cols if c in shown.columns]
+    st.dataframe(shown.sort_values("Fundamental/composite score", ascending=False, na_position="last")[display_cols],
+        width="stretch", hide_index=True, height=520, column_config={
+        "Fundamental/composite score": st.column_config.ProgressColumn("Composite score", min_value=0, max_value=100, format="%.1f"),
+        "Technical score": st.column_config.ProgressColumn("Technical score", min_value=0, max_value=100, format="%.1f"),
+        "Quality score": st.column_config.NumberColumn(format="%.1f"), "Value score": st.column_config.NumberColumn(format="%.1f"),
+        "Growth score": st.column_config.NumberColumn(format="%.1f"), "Momentum score": st.column_config.NumberColumn(format="%.1f"),
+        "Fundamental coverage %": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%"),
+        "Price": st.column_config.NumberColumn(format="%.2f"), "Momentum 12-1M": st.column_config.NumberColumn(format="%.1%"),
+        "Momentum 6-1M": st.column_config.NumberColumn(format="%.1%"), "ATR20%": st.column_config.NumberColumn(format="%.2f%"),
+        "ADX14": st.column_config.NumberColumn(format="%.1f"),
+    })
+    st.download_button("Stáhnout kompletní screener CSV", shown.to_csv(index=False).encode("utf-8"), "quality_momentum_screener.csv", "text/csv")
+    st.divider()
+    selected_ticker = st.selectbox("Detail akcie", screener["Ticker"].tolist())
+    if selected_ticker in prices:
+        frame = prices[selected_ticker]
+        indicators = calculate_indicators(frame)
+        st.plotly_chart(_equity_chart(frame["Close"].dropna(), indicators["MA50"], indicators["MA200"],
+            f"{selected_ticker} · Close / MA50 / MA200"), width="stretch")
+        row = screener.loc[screener["Ticker"] == selected_ticker].iloc[0]
+        a,b,c,d = st.columns(4)
+        a.metric("Composite", "—" if pd.isna(row["Fundamental/composite score"]) else f"{row['Fundamental/composite score']:.1f}/100")
+        b.metric("12–1M momentum", "—" if pd.isna(row["Momentum 12-1M"]) else f"{row['Momentum 12-1M']:.1%}")
+        c.metric("ADX(14)", "—" if pd.isna(row["ADX14"]) else f"{row['ADX14']:.1f}")
+        d.metric("ATR(20) %", "—" if pd.isna(row["ATR20%"]) else f"{row['ATR20%']:.2f}%")
+        with st.expander("Všechny metriky a metadata"):
+            st.json(_format_detail_dict(row.to_dict()))
+
+with tab_strategy:
+    st.subheader("Měsíční rebalancování · nízká obrátka")
+    st.markdown("Signál se vytváří na konci měsíce a výnos portfolia se počítá za následující měsíc. Náklady se aplikují na hrubý zobchodovaný objem. Hystereze omezuje výměny při malém rozdílu skóre.")
+    sec_coverage = sum(1 for t in sec_bundles if t in prices) / max(1, len(universe))
+    default_pit = sec_coverage >= 0.70
+    use_pit = st.checkbox(f"Zapnout point-in-time SEC fundamenty v backtestu (coverage nyní {sec_coverage:.0%})",
+        value=default_pit, disabled=sec_coverage < 0.40,
+        help="Historický signál používá jen fakta zveřejněná do dne rozhodnutí. Zůstává survivorship bias, protože univerzum je současný seznam.")
+    st.caption("Signálové parametry jsou vlevo. Stop-loss 50denní low / 3×ATR je v kalkulátoru pozic; tento měsíční backtest nepředstírá intradenní exekuci stopů.")
+    signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
+        cost_bps, breakout_filter, use_pit, use_estimated_value, bool(sentiment_df is not None),
+        bool(revision_df is not None), capital)
+    run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
+    saved = st.session_state.get("backtest_result")
+    if run_backtest:
+        benchmark_series = _daily_returns(price_data_all["SPY"]) if "SPY" in price_data_all else None
+        fund_histories, optional_histories = {}, {}
+        try:
+            with st.spinner("Počítám historické signály, point-in-time fundamenty a rebalancování…"):
+                if use_pit and sec_bundles:
+                    fund_histories = _make_fundamental_history(prices, sec_bundles, use_estimated_value)
+                all_closes = pd.DataFrame({t: f["Adj Close"] if "Adj Close" in f else f["Close"] for t,f in prices.items() if not f.empty})
+                monthly_dates = list(all_closes.resample("ME").last().dropna(how="all").index)
+                if sentiment_df is not None:
+                    optional_histories.update(signal_history(sentiment_df, "Sentiment score", monthly_dates))
+                if revision_df is not None:
+                    optional_histories.update(signal_history(revision_df, "Revision score", monthly_dates))
+                curve, metrics, audit = run_monthly_backtest(
+                    prices=prices, benchmark=benchmark_series, top_n=top_n, cost_bps=cost_bps,
+                    initial=capital, min_adx=min_adx, min_score=min_score, hysteresis=hysteresis,
+                    max_replacements=max_replacements, use_fundamentals=use_pit,
+                    fundamentals_history=fund_histories, optional_history=optional_histories,
+                    require_breakout=breakout_filter)
+                st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
+        except Exception as exc:
+            st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
+        saved = st.session_state.get("backtest_result")
+    if saved is None:
+        st.info("Backtest ještě nebyl spuštěn. Spusť výpočet tlačítkem výše.")
+    elif saved.get("signature") != signature:
+        st.warning("Výsledky odpovídají předchozí konfiguraci. Spusť přepočet.")
+    elif saved.get("error"):
+        st.error("Výsledek není vykázán, protože data/return series nejsou úplná: " + saved["error"])
+    elif saved.get("curve") is None:
+        st.warning("Nedostatek historie nebo platných titulů pro backtest.")
+    else:
+        curve, metrics, audit = saved["curve"], saved["metrics"], saved["audit"]
+        a,b,c,d = st.columns(4)
+        a.metric("CAGR strategie", f"{metrics['CAGR']:.1%}")
+        b.metric("Volatilita p.a.", f"{metrics['Volatility']:.1%}")
+        c.metric("Sharpe (rf=0)", "—" if pd.isna(metrics["Sharpe (rf=0)"]) else f"{metrics['Sharpe (rf=0)']:.2f}")
+        d.metric("Max drawdown", f"{metrics['Max drawdown']:.1%}")
+        e,f,g,h = st.columns(4)
+        e.metric("Konečná hodnota", f"${metrics['Final equity']:,.0f}")
+        f.metric("Testované měsíce", str(metrics["Months"]))
+        g.metric("Obrat / měsíc", f"{metrics['Average monthly turnover %']:.1f}%")
+        h.metric("Součet modelových nákladů", f"{metrics['Total transaction costs %']:.2f}%")
+        equity_fig = go.Figure()
+        equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Equity"],name="Strategie",line=dict(width=2.5,color="#72e0c1")))
+        if "Benchmark equity" in curve:
+            equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Benchmark equity"],name="Benchmark SPY",line=dict(width=1.7,color="#f6bd60")))
+        equity_fig.update_layout(template="plotly_dark",title="Růst modelového kapitálu",height=410,
+            margin=dict(l=10,r=10,t=45,b=10),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",hovermode="x unified")
+        st.plotly_chart(equity_fig, width="stretch")
+        ret_fig = px.bar(curve.reset_index(), x="Date", y="Net return", title="Čistý měsíční výnos", template="plotly_dark")
+        ret_fig.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(ret_fig, width="stretch")
+        with st.expander("Audit každého rebalancování"):
+            st.dataframe(audit, width="stretch", hide_index=True)
+        st.dataframe(curve, width="stretch")
+        st.download_button("Stáhnout equity curve CSV",curve.to_csv().encode("utf-8"),"backtest_curve.csv","text/csv")
+        st.download_button("Stáhnout audit obchodních rozhodnutí CSV",audit.to_csv(index=False).encode("utf-8"),"backtest_audit.csv","text/csv")
+        st.warning("Tento test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Close-to-close model nákladů nenahrazuje plnou exekuci na open/spread/slippage a daňový model.")
+
+with tab_portfolio:
+    st.subheader("ATR position sizing a evidence lotů")
+    st.markdown("Kalkulátor převádí maximální riziko na počet kusů při zadaném ATR stopu a limitech expozice. Nezadává pokyny brokerovi.")
+    candidates = screener.sort_values("Fundamental/composite score",ascending=False,na_position="last")
+    suggested = candidates.loc[candidates["Trend OK"],"Ticker"].head(min(top_n,5)).tolist()
+    picked = st.multiselect("Tituly ke kalkulaci",screener["Ticker"].tolist(),default=suggested)
+    sizes = calculate_position_sizes(screener,picked,capital,risk_budget_pct=risk_budget_pct,
+        stop_atr_multiple=stop_atr,max_position_pct=max_position_pct,max_total_exposure_pct=max_exposure_pct)
+    if sizes.empty:
+        st.info("Vyber akcie s dostupnou cenou a ATR(20).")
+    else:
+        a,b,c = st.columns(3)
+        a.metric("Modelová alokace",f"${sizes['Position value'].sum():,.0f}")
+        b.metric("Expozice kapitálu",f"{sizes['Weight %'].sum():.1f}%")
+        c.metric("Odhadované počáteční riziko",f"${sizes['Initial risk budget'].sum():,.0f}")
+        st.dataframe(sizes,width="stretch",hide_index=True,column_config={
+            "Weight %":st.column_config.NumberColumn(format="%.2f%%"),"Price":st.column_config.NumberColumn(format="%.2f"),
+            "ATR20":st.column_config.NumberColumn(format="%.2f"),"Provisional stop":st.column_config.NumberColumn(format="%.2f"),
+            "Position value":st.column_config.NumberColumn(format="$%.2f"),"Initial risk budget":st.column_config.NumberColumn(format="$%.2f")})
+        st.download_button("Stáhnout plán pozic CSV",sizes.to_csv(index=False).encode("utf-8"),"position_sizing.csv","text/csv")
+    st.divider()
+    st.markdown("#### FIFO tax-lot ledger")
+    st.write("Nahraj historii transakcí. Výpočet páruje prodeje s nejstaršími nákupními loty, započítá dodané poplatky a ukáže realizovaný zisk/ztrátu i zbylé loty. Neaplikuje české daňové osvobození, sazby, časové testy ani přepočet měn.")
+    template = pd.DataFrame([
+        {"Date":"2024-01-15","Ticker":"MSFT","Type":"BUY","Quantity":10,"Price":400,"Fees":1,"Currency":"USD"},
+        {"Date":"2025-03-01","Ticker":"MSFT","Type":"SELL","Quantity":4,"Price":420,"Fees":1,"Currency":"USD"},
+    ])
+    st.download_button("Stáhnout ukázkový CSV formát lotů",template.to_csv(index=False).encode("utf-8"),"tax_lot_template.csv","text/csv")
+    ledger_upload = st.file_uploader("Transakční historie CSV",type=["csv"],key="tax_lot_file")
+    if ledger_upload is not None:
+        try:
+            transactions = pd.read_csv(io.BytesIO(ledger_upload.getvalue()))
+            realized,open_lots,annual = fifo_ledger(transactions)
+            a,b,c = st.columns(3)
+            a.metric("Realizovaný zisk / ztráta",f"{realized['Realized gain/loss'].sum():,.2f}" if not realized.empty else "0.00")
+            b.metric("Realizované páry",str(len(realized)))
+            c.metric("Otevřené loty",str(len(open_lots)))
+            if not realized.empty:
+                st.markdown("**Realizované páry (FIFO)**")
+                st.dataframe(realized,width="stretch",hide_index=True)
+                st.download_button("Stáhnout realizované páry",realized.to_csv(index=False).encode("utf-8"),"fifo_realized.csv","text/csv")
+            if not open_lots.empty:
+                st.markdown("**Otevřené loty**")
+                st.dataframe(open_lots,width="stretch",hide_index=True)
+                st.download_button("Stáhnout otevřené loty",open_lots.to_csv(index=False).encode("utf-8"),"fifo_open_lots.csv","text/csv")
+            st.markdown("**Roční souhrn podle měny a tickeru**")
+            st.dataframe(annual,width="stretch",hide_index=True)
+        except Exception as exc:
+            st.error(f"FIFO import selhal: {type(exc).__name__}: {exc}")
+
+with tab_data:
+    st.subheader("Kontrola kvality dat")
+    st.markdown("Chybná data vedou k sebejistým, ale chybným výsledkům. Proto je zde samostatný panel zdrojů a úplnosti.")
+    data_cols = [c for c in ["Ticker","Status","Rows","First date","Last date","Missing %","Message"] if c in price_report.columns]
+    st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430)
+    st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
+    combined = _download_frame(price_data_all)
+    if not combined.empty:
+        st.download_button("Stáhnout adjustované cenové řady CSV",combined.to_csv(index_label="Date").encode("utf-8"),"adjusted_price_history.csv","text/csv")
+    if valid_email:
+        sec_report = []
+        for ticker in universe:
+            record = fundamentals.get(ticker,{})
+            sec_report.append({"Ticker":ticker,"Source":record.get("Source","No SEC data"),
+                "Financial period":record.get("Financial period",""),"Latest filing date":record.get("Latest filing date",""),
+                "Fundamental status":record.get("Fundamental status","Not loaded"),"Data note":record.get("Data note","")})
+        st.markdown("#### Fundamentální zdroj a stáří výkazů")
+        sec_df = pd.DataFrame(sec_report)
+        st.dataframe(sec_df,width="stretch",hide_index=True)
+        st.download_button("Stáhnout SEC provenance CSV",sec_df.to_csv(index=False).encode("utf-8"),"sec_provenance.csv","text/csv")
+    if price_report["Status"].eq("MISSING").any():
+        st.error("Některé cenové řady chybí. Backtest se nesmí používat bez vyřešení dat.")
+    else:
+        st.success("Cenové řady byly vráceny pro všechny tickery označené jako dostupné při tomto stažení.")
+    st.caption(f"Načteno v tomto běhu · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    st.caption("Dostupná historická řada neznamená ověřenou burzovní exekuci; poskytovatel může data opravit nebo omezit.")
+
+with tab_method:
+    st.subheader("Pravidla modelu")
+    st.markdown(
+        """
+        ### Faktory a relativní skóre
+        - **Quality:** ROE, zisková marže, FCF marže.
+        - **Value:** FCF yield a kladné P/E pouze při zapnutí orientačního ocenění. Chybějící pole zůstávají chybějící.
+        - **Growth:** růst ročních tržeb a zisku z veřejných výkazů; nejde o konsenzuální revize analytiků.
+        - **Momentum:** 12–1M a 6–1M s vynecháním posledních přibližně 21 obchodních dnů.
+        - **Trend:** Close nad MA200, MA50 nad MA200 a rostoucí MA200; ADX(14) měří sílu trendu.
+        - **Breakout:** Close nad předchozími high za 20 nebo 55 seancí, bez aktuální svíčky v referenčním maximu.
+        - **Risk:** ATR(20), limit pozice a modelový stop ve vzdálenosti násobku ATR.
+
+        ### Časová správnost
+        Fundamentální údaje z SEC se filtrují podle filed date a historické rozhodnutí nepoužije výkaz zveřejněný později. Tím se ale neřeší survivorship bias současného tickerového seznamu.
+
+        ### Omezení
+        - Yahoo Finance přes yfinance je neoficiální rozhraní; ověř podmínky poskytovatele. Data nejsou licencovaným produkčním feedem.
+        - SEC Company Facts pokrývá reportující emitenty a standardizované XBRL tagy; metriky se mohou lišit účetními standardy a dostupností tagu.
+        - P/E a FCF yield používají hrubý odhad tržní kapitalizace z ceny a posledního nahlášeného počtu akcií. U ADR, duálních tříd a změn kapitálu mohou být chybné, proto jsou výchozím stavem mimo skóre.
+        - Backtest používá současný seznam a není survivorship-bias-free. Měsíční close-to-close simulace není přesný broker fill model.
+        - Sentiment/revize jsou volitelné časované CSV; historický model vybírá jen poslední známý záznam k rozhodovacímu dni.
+        - FIFO eviduje pořizovací náklady a poplatky; neurčuje českou daňovou povinnost a nepřepočítává měny.
+        - HMM je záměrně odložen, dokud základní strategie neprojde out-of-sample testem. Jinak by zvyšoval riziko přeoptimalizace.
+
+        ### Cesta k důvěryhodným výsledkům
+        Historické univerzum včetně delistovaných titulů, jasná práva k datům, point-in-time fundamenty, dividendy/FX/corporate actions, spread a skluz, walk-forward validace a předem odložené testovací období.
+        """
+    )
+    st.markdown("**Roadmap:** [ROADMAP.md](https://github.com/Matthew-pros/quality-momentum-lab/blob/main/ROADMAP.md) · [Automatické testy](https://github.com/Matthew-pros/quality-momentum-lab/actions)")
+    st.caption("Výzkumný nástroj; nejde o investiční, daňové ani právní doporučení.")
