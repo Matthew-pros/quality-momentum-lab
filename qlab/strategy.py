@@ -261,17 +261,22 @@ def select_with_hysteresis(
     valid = valid[eligible.reindex(valid.index).fillna(False).astype(bool)]
     ranked = valid.sort_values(ascending=False)
     ranked_names = list(ranked.index)
+    if not previous:
+        # Fill initial portfolio once; the replacement cap governs subsequent rebalance dates.
+        return set(ranked_names[:top_n])
     current = [
         ticker for ticker in previous
         if ticker in ranked.index and float(ranked[ticker]) >= exit_score_floor
     ]
-    # Refill vacant slots immediately with the best eligible candidates.
+    replacements = 0
+    # Mandatory exits can leave vacancies. Limit replacement entries to the configured
+    # count so that a rule violation does not trigger an uncontrolled full rebalance.
     for ticker in ranked_names:
-        if len(current) >= top_n:
+        if len(current) >= top_n or replacements >= max_replacements:
             break
         if ticker not in current:
             current.append(ticker)
-    replacements = 0
+            replacements += 1
     while len(current) >= top_n and top_n > 0 and replacements < max_replacements:
         incumbents = [t for t in current if t in ranked.index]
         challengers = [t for t in ranked_names if t not in current]
