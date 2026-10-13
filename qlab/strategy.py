@@ -218,7 +218,7 @@ def prepare_screener(
             "Financial period": f.get("Financial period", ""),
             "Latest filing date": f.get("Latest filing date", ""),
             "Price date": available.index[-1].date().isoformat(),
-            "Price": float(frame["Close"].dropna().iloc[-1]) if "Close" in frame else float(latest["Close"]),
+            "Price": float(frame.loc[available.index[-1], "Close"]) if "Close" in frame else float(latest["Close"]),
             "Market cap estimate": f.get("Estimated market cap", np.nan),
             "Revenue": f.get("Revenue", np.nan),
             "Net income": f.get("Net income", np.nan),
@@ -238,7 +238,16 @@ def prepare_screener(
             "MA200": latest.get("MA200", np.nan),
             "MA200 rising": bool(latest.get("MA200", np.nan) > latest.get("MA200_prev20", np.nan)) if pd.notna(latest.get("MA200", np.nan)) and pd.notna(latest.get("MA200_prev20", np.nan)) else False,
             "ADX14": latest.get("ADX14", np.nan),
-            "ATR20": latest.get("ATR20", np.nan),
+            "ATR20": (
+                float(latest.get("ATR20", np.nan)) /
+                float(latest.get("Adj Close", np.nan) / frame.loc[available.index[-1], "Close"])
+                if pd.notna(latest.get("ATR20", np.nan))
+                and pd.notna(latest.get("Adj Close", np.nan))
+                and pd.notna(frame.loc[available.index[-1], "Close"])
+                and frame.loc[available.index[-1], "Close"] > 0
+                and latest.get("Adj Close", 0) > 0
+                else latest.get("ATR20", np.nan)
+            ),
             "ATR20%": latest.get("ATR20%", np.nan),
             "Breakout20": bool(latest.get("Breakout20", False)),
             "Breakout55": bool(latest.get("Breakout55", False)),
