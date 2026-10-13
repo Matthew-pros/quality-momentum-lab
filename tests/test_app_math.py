@@ -526,3 +526,40 @@ def test_hysteresis_tie_breaking_is_deterministic_by_ticker():
         min_improvement=0.0, exit_score_floor=0.0, max_replacements=1,
     )
     assert selected == {"B", "C"}
+
+
+def test_fcfe_dcf_reconciles_terminal_value_and_per_share_equity_value():
+    from qlab.valuation import calculate_fcfe_dcf
+
+    result = calculate_fcfe_dcf(
+        base_fcf=100.0, annual_growth_rate=0.0, cost_of_equity=0.10,
+        terminal_growth_rate=0.02, years=5, shares_outstanding=10.0,
+    )
+    assert result["PV forecast FCF"] > 0
+    assert result["PV terminal value"] > 0
+    assert result["Implied equity value"] == pytest.approx(
+        result["PV forecast FCF"] + result["PV terminal value"]
+    )
+    assert result["Implied value per share"] == pytest.approx(result["Implied equity value"] / 10.0)
+    assert result["Terminal value share %"] > 50
+
+
+def test_dcf_rejects_nonpositive_fcf_and_invalid_terminal_discount_relationship():
+    from qlab.valuation import calculate_fcfe_dcf
+
+    with pytest.raises(ValueError, match="Base free cash flow must be positive"):
+        calculate_fcfe_dcf(0.0, 0.05, 0.10, 0.02)
+    with pytest.raises(ValueError, match="must be greater than terminal growth"):
+        calculate_fcfe_dcf(100.0, 0.05, 0.02, 0.02)
+
+
+def test_dcf_sensitivity_value_falls_when_discount_rate_rises():
+    from qlab.valuation import dcf_sensitivity
+
+    table = dcf_sensitivity(
+        base_fcf=100.0, shares_outstanding=10.0,
+        growth_rates=[0.05], discount_rates=[0.08, 0.10, 0.12],
+        terminal_growth_rate=0.02, years=5,
+    )
+    values = table.iloc[0, 1:].to_numpy(dtype=float)
+    assert values[0] > values[1] > values[2]
