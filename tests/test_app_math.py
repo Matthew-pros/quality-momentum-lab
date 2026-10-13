@@ -393,7 +393,7 @@ def test_sec_history_reprices_between_filings_without_changing_reported_fundamen
     bundle = {"ticker":"AAA","title":"AAA Inc.","payload":facts}
     dates = pd.to_datetime(["2023-03-31","2023-04-30"])
     prices = pd.Series([10.0,20.0], index=pd.to_datetime(["2023-03-31","2023-04-28"]))
-    history = sec_snapshot_to_history(bundle, list(dates), prices)
+    history = sec_snapshot_to_history(bundle, list(dates), prices, price_currency="USD")
     assert history.iloc[0]["Revenue"] == history.iloc[1]["Revenue"] == 150
     assert history.iloc[0]["As of"] == "2023-03-31"
     assert history.iloc[1]["As of"] == "2023-04-30"
@@ -1290,3 +1290,69 @@ def test_usd_price_basis_gate_requires_usd_metadata_or_explicit_attestation():
     )
     assert not missing["ready"]
     assert missing["missing_tickers"] == ["DELISTED"]
+
+
+def test_sec_financial_ratios_and_valuation_are_suppressed_when_xbrl_units_disagree():
+    from qlab.data import sec_fundamental_snapshot
+
+    def observations(values, filed, unit="USD"):
+        return {unit: [
+            {"start":f"{year}-01-01","end":f"{year}-12-31","val":value,"filed":filing,"form":"10-K"}
+            for year, value, filing in zip([2021, 2022], values, filed)
+        ]}
+    facts = {"facts":{"us-gaap":{
+        "Revenues":{"units":observations([100,150],["2022-02-15","2023-02-15"],"USD")},
+        "NetIncomeLoss":{"units":observations([10,15],["2022-02-15","2023-02-15"],"EUR")},
+        "NetCashProvidedByUsedInOperatingActivities":{"units":observations([18,25],["2022-02-15","2023-02-15"],"USD")},
+        "PaymentsToAcquirePropertyPlantAndEquipment":{"units":observations([4,5],["2022-02-15","2023-02-15"],"EUR")},
+        "StockholdersEquity":{"units":{"USD":[
+            {"end":"2022-12-31","val":60,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+        "EntityCommonStockSharesOutstanding":{"units":{"shares":[
+            {"end":"2022-12-31","val":100,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+    }}}
+    result = sec_fundamental_snapshot(
+        {"ticker":"MIX","title":"Mixed Units Ltd","payload":facts},
+        as_of="2024-06-30", latest_price=20, price_currency="USD",
+    )
+    assert result["Revenue unit"] == "USD"
+    assert result["Net income unit"] == "EUR"
+    assert result["FCF unit"] == ""
+    assert pd.isna(result["FCF"])
+    assert pd.isna(result["Profit margin %"])
+    assert pd.isna(result["ROE %"])
+    assert pd.isna(result["FCF margin %"])
+    assert pd.isna(result["Estimated market cap"])
+    assert pd.isna(result["P/E (annual EPS proxy)"])
+    assert pd.isna(result["FCF yield %"])
+    assert result["Revenue growth %"] == pytest.approx(50.0)
+    assert result["Earnings growth %"] == pytest.approx(50.0)
+
+
+def test_sec_estimated_multiples_require_explicit_matching_quote_currency():
+    from qlab.data import sec_fundamental_snapshot
+
+    def annual(values, filings):
+        return {"USD": [
+            {"start":f"{year}-01-01","end":f"{year}-12-31","val":value,"filed":filed,"form":"10-K"}
+            for year, value, filed in zip([2021, 2022], values, filings)
+        ]}
+    facts = {"facts":{"us-gaap":{
+        "Revenues":{"units":annual([100,150],["2022-02-15","2023-02-15"])},
+        "NetIncomeLoss":{"units":annual([10,15],["2022-02-15","2023-02-15"])},
+        "NetCashProvidedByUsedInOperatingActivities":{"units":annual([18,25],["2022-02-15","2023-02-15"])},
+        "PaymentsToAcquirePropertyPlantAndEquipment":{"units":annual([4,5],["2022-02-15","2023-02-15"])},
+        "StockholdersEquity":{"units":{"USD":[{"end":"2022-12-31","val":60,"filed":"2023-02-15","form":"10-K"}]}},
+        "EntityCommonStockSharesOutstanding":{"units":{"shares":[{"end":"2022-12-31","val":100,"filed":"2023-02-15","form":"10-K"}]}},
+    }}}
+    bundle={"ticker":"AAA","title":"AAA Inc.","payload":facts}
+    unknown_quote = sec_fundamental_snapshot(bundle,"2024-06-30",latest_price=20)
+    usd_quote = sec_fundamental_snapshot(bundle,"2024-06-30",latest_price=20,price_currency="USD")
+    eur_quote = sec_fundamental_snapshot(bundle,"2024-06-30",latest_price=20,price_currency="EUR")
+    assert pd.isna(unknown_quote["Estimated market cap"])
+    assert pd.isna(unknown_quote["P/E (annual EPS proxy)"])
+    assert usd_quote["Estimated market cap"] == pytest.approx(2_000)
+    assert usd_quote["P/E (annual EPS proxy)"] == pytest.approx(2_000 / 15)
+    assert pd.isna(eur_quote["Estimated market cap"])
+    assert pd.isna(eur_quote["P/E (annual EPS proxy)"])
