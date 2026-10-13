@@ -44,11 +44,12 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat měsíční obrat, náklady v bps, CAGR, volatilitu, Sharpe, drawdown, SPY benchmark a export equity curve/auditu.
 - [x] Přidat hysterézi, limit výměn na rebalancování a měsíční výstupní spouštěč 50denního minima.
 - [x] Přidat volbu Equal Weight vs. Inverse ATR se stropem váhy, neinvestovaný zbytek zůstává v hotovosti.
+- [x] Přidat volitelné výstupy: bez stopu, měsíční 50denní low, denní 50denní low, ATR trailing stop nebo obojí; denní verze zaznamenává stop a datum výstupu a používá konzervativní přibližné plnění z denního OHLC.
+- [x] Přidat citlivost CAGR/volatility/Sharpe/drawdown na různé náklady při zachování stejné historie signálů.
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
-- [ ] Nahradit hrubý close-to-close cost proxy realistickým modelem exekuce: open/close fill, spread, skluz, komise, likvidita, FX, dividendy a corporate actions.
-- [ ] Zpracovat v plném backtestu stop-loss/trailing stop na denních cenách; dnešní 50denní exit je měsíční uzavírací pravidlo a nenapodobuje intradenní plnění.
+- [ ] Nahradit hrubý close-to-close cost proxy realistickým modelem exekuce: přesné open/close fill, bid/ask spread, skluz, komise, likvidita, FX, dividendy a corporate actions.
 - [ ] Přidat walk-forward, oddělený vývojový/testovací vzorek, benchmarky napříč regiony a report sektorových/regime expozic.
-- [ ] Přidat kontrolu citlivosti, transakční náklady při malých i stresových objemech a prokázat, že chybějící/delistované výnosy nezkreslují výsledek.
+- [ ] Prokázat, že chybějící/delistované výnosy nezkreslují výsledek; aktuální seznam tickerů stále vytváří survivorship bias.
 
 **Brána fáze:** výsledek musí být reprodukovatelný, s náklady, bez look-ahead bias a s benchmarkem; používání aktuálního tickerového seznamu stále znamená survivorship bias.
 
@@ -61,14 +62,15 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat předběžné daňové kontrolní štítky pro české osvobození (CZK roční hrubý hodnotový test a více než tříletý časový test) podle oficiálního shrnutí pro rok 2026.
 - [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje za celý rok, corporate actions, dědictví a výjimky (např. obchodní majetek); nesmí to být považováno za finální výpočet daně.
 - [ ] Přidat sektorové limity, portfolio-level risk budget, počet obchodů, dobu držení a příspěvek nákladů.
-- [ ] Testovat 50denní minimum, ATR trailing stop, MA200 a breakout jako oddělené varianty, ne jako předem jisté zlepšení.
+- [x] Umožnit porovnání variant 50denního minima a ATR trailing stopu jako samostatných nastavení, ne jako předem jistého zlepšení.
+- [ ] Přidat sektorové limity a portfolio-level risk budget; současné limity se týkají jednotlivé pozice a celkové expozice.
 
 **Daňové upozornění:** modul zatím neurčuje daňovou povinnost, sazbu ani obsah přiznání. Pro orientaci vychází z veřejného shrnutí Finanční správy: https://financnisprava.gov.cz/cs/financni-sprava/media-a-verejnost/tiskove-zpravy-gfr/tiskove-zpravy-2026/danove-novinky-pro-rok-2026. U konkrétních případů je třeba ověřit zákonné podmínky a úplnost celého portfolia.
 
 ## Fáze 5 — Robustnost a release 1.0
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
-- [ ] Přidat CI test kompletního importu a spuštění Streamlit UI proti simulovaným datům bez síťových volání.
+- [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
 - [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
 - [ ] Reportovat nejistotu výkonu, volatilitu, drawdown, obrat, benchmark a expozice po sektorech/obdobích.
