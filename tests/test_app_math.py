@@ -148,3 +148,74 @@ def test_fifo_rejects_short_sales():
     tx = pd.DataFrame([{"Date":"2024-01-01","Ticker":"AAA","Type":"SELL","Quantity":1,"Price":10}])
     with pytest.raises(ValueError, match="exceeds FIFO inventory"):
         fifo_ledger(tx)
+
+
+def test_yfinance_multiindex_columns_split_into_per_ticker_frames():
+    from qlab.data import _extract_ticker_frame, normalize_tickers
+
+    index = pd.bdate_range("2025-01-01", periods=3)
+    columns = pd.MultiIndex.from_product(
+        [["AAA", "BBB"], ["Open", "High", "Low", "Close", "Adj Close", "Volume"]]
+    )
+    values = np.arange(36, dtype=float).reshape(3, 12) + 10
+    raw = pd.DataFrame(values, index=index, columns=columns)
+    aa = _extract_ticker_frame(raw, "AAA", ["AAA", "BBB"])
+    bb = _extract_ticker_frame(raw, "BBB", ["AAA", "BBB"])
+    assert list(aa.columns) == ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    assert list(bb.columns) == list(aa.columns)
+    assert aa.shape == (3, 6) and bb.shape == (3, 6)
+    assert normalize_tickers("aaa, BBB,aaa,,") == ["AAA", "BBB"]
+
+
+def test_sec_fundamentals_respect_filing_date_as_of_cutoff():
+    from qlab.data import sec_fundamental_snapshot
+
+    def annual_rows(values, filed_dates):
+        rows = []
+        for year, value, filed in zip([2021, 2022, 2023], values, filed_dates):
+            rows.append({
+                "start": f"{year}-01-01", "end": f"{year}-12-31",
+                "val": value, "filed": filed, "form": "10-K", "fy": year, "fp": "FY",
+            })
+        return {"USD": rows}
+
+    facts = {
+        "us-gaap": {
+            "Revenues": {"units": annual_rows([100, 150, 180], ["2022-02-15", "2023-02-15", "2024-02-15"])},
+            "NetIncomeLoss": {"units": annual_rows([10, 15, 20], ["2022-02-15", "2023-02-15", "2024-02-15"])},
+            "NetCashProvidedByUsedInOperatingActivities": {"units": annual_rows([18, 25, 30], ["2022-02-15", "2023-02-15", "2024-02-15"])},
+            "PaymentsToAcquirePropertyPlantAndEquipment": {"units": annual_rows([4, 5, 8], ["2022-02-15", "2023-02-15", "2024-02-15"])},
+            "StockholdersEquity": {"units": {"USD": [
+                {"end": "2022-12-31", "val": 40, "filed": "2023-02-15", "form": "10-K"},
+                {"end": "2023-12-31", "val": 60, "filed": "2024-02-15", "form": "10-K"},
+            ]}},
+            "LongTermDebtNoncurrent": {"units": {"USD": [
+                {"end": "2022-12-31", "val": 12, "filed": "2023-02-15", "form": "10-K"},
+            ]}},
+            "EntityCommonStockSharesOutstanding": {"units": {"shares": [
+                {"end": "2022-12-31", "val": 100, "filed": "2023-02-15", "form": "10-K"},
+            ]}},
+        },
+    }
+    snapshot = sec_fundamental_snapshot(
+        {"ticker": "AAA", "title": "AAA Corporation", "payload": {"facts": facts}},
+        as_of="2023-06-30", latest_price=2.0,
+    )
+    assert snapshot["Revenue"] == 150
+    assert snapshot["Revenue growth %"] == pytest.approx(50)
+    assert snapshot["Net income"] == 15
+    assert snapshot["Earnings growth %"] == pytest.approx(50)
+    assert snapshot["FCF"] == pytest.approx(20)
+    assert snapshot["Profit margin %"] == pytest.approx(10)
+    assert snapshot["ROE %"] == pytest.approx(37.5)
+    assert snapshot["Financial period"] == "2022-12-31"
+    assert snapshot["Latest filing date"] <= "2023-06-30"
+
+
+def test_empty_or_invalid_price_frame_is_not_accepted_as_data():
+    from qlab.data import _extract_ticker_frame
+
+    empty = _extract_ticker_frame(pd.DataFrame(), "AAA", ["AAA"])
+    assert empty.empty
+    raw = pd.DataFrame({"Volume": [100, 200]}, index=pd.date_range("2025-01-01", periods=2))
+    assert _extract_ticker_frame(raw, "AAA", ["AAA"]).empty
