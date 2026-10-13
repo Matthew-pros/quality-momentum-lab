@@ -81,3 +81,27 @@ def test_streamlit_backtest_and_train_holdout_buttons_run_offline(monkeypatch):
     assert result.get("error") is None
     assert result["metrics"]["Holdout months"] >= 6
     assert result["candidates"]["Selected by train"].sum() == 1
+
+
+def test_streamlit_dcf_form_calculates_and_renders_sensitivity_offline(monkeypatch):
+    monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
+    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
+    st.cache_data.clear()
+
+    app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=60)
+    app.run()
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+
+    fcf = next(item for item in app.number_input if item.label == "Normalizované roční FCF (v reportovací měně)")
+    shares = next(item for item in app.number_input if item.label == "Počet akcií v oběhu (kusy)")
+    confirmation = next(item for item in app.checkbox if item.label.startswith("Ověřil/a jsem"))
+    fcf.set_value(3_000_000_000)
+    shares.set_value(1_000_000_000)
+    confirmation.set_value(True)
+    app.run()
+
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+    rendered_labels = {str(item.label) for item in app.metric}
+    assert "Modelová hodnota / akcii" in rendered_labels
+    assert "Terminální hodnota / PV" in rendered_labels
+    assert any("Citlivost hodnoty na růst FCF a diskontní sazbu" in str(item.value) for item in app.markdown)
