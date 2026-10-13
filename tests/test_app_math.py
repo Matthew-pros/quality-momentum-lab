@@ -631,3 +631,18 @@ def test_sector_cap_reduces_existing_concentration_deterministically_and_respect
     assert "A" in selected and "B" not in selected
     assert len(selected) == 3
     assert len({groups[t] for t in selected}) == 3
+
+
+def test_component_costs_sum_on_rebalance_and_stop_turnover():
+    curve, _, audit = run_monthly_backtest(
+        synthetic_prices(1600), top_n=2, cost_bps=0, initial=10_000,
+        min_adx=0, min_score=0, hysteresis=7, max_replacements=1,
+        use_fundamentals=False, commission_bps=1.0, half_spread_bps=4.0, slippage_bps=6.0,
+        stop_mode="ATR trailing stop",
+    )
+    assert curve is not None and audit is not None
+    assert np.allclose(curve["Transaction cost"], curve["Gross turnover"] * 11.0 / 10_000)
+    assert set(audit["Commission bps"]) == {1.0}
+    assert set(audit["Half-spread bps"]) == {4.0}
+    assert set(audit["Slippage bps"]) == {6.0}
+    assert set(audit["Cost bps"]) == {11.0}
