@@ -766,3 +766,24 @@ def test_synthetic_demo_prices_are_deterministic_and_explicitly_non_real():
     assert first_report["Source"].eq("Synthetic demo").all()
     assert first_report["Message"].str.contains("SYNTHETIC DEMO ONLY").all()
     assert first_report["Quality"].eq("OK").all()
+
+
+def test_market_quality_rejects_inconsistent_ohlc_ranges_and_negative_volume():
+    from qlab.data import assess_price_quality
+
+    index = pd.to_datetime(["2026-10-01", "2026-10-02", "2026-10-05"])
+    frame = pd.DataFrame({
+        "Open": [10.0, 12.0, 10.0],
+        "High": [11.0, 11.0, 11.0],
+        "Low": [9.0, 9.0, 9.0],
+        "Close": [10.5, 10.0, 10.2],
+        "Adj Close": [10.5, 10.0, 10.2],
+        "Volume": [100.0, 100.0, -1.0],
+    }, index=index)
+    prices, report = assess_price_quality({"AAA": frame}, now="2026-10-13")
+    row = report.iloc[0]
+    assert row["Quality"] == "REVIEW"
+    assert row["Invalid price rows"] == 2
+    assert pd.isna(prices["AAA"].loc[index[1], "Close"])
+    assert pd.isna(prices["AAA"].loc[index[2], "Close"])
+    assert prices["AAA"].loc[index[0], "Close"] == pytest.approx(10.5)
