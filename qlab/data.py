@@ -118,13 +118,28 @@ def assess_price_quality(
         clean = frame.copy().sort_index()
         close = pd.to_numeric(clean["Close"], errors="coerce")
         invalid = (~np.isfinite(close) | (close <= 0))
+        numeric_prices: dict[str, pd.Series] = {"Close": close}
+        for column in ["Open", "High", "Low"]:
+            if column in clean:
+                numeric_prices[column] = pd.to_numeric(clean[column], errors="coerce")
+                invalid |= (
+                    ~np.isfinite(numeric_prices[column])
+                    | (numeric_prices[column] <= 0)
+                )
         if "Adj Close" in clean:
             adjusted_close = pd.to_numeric(clean["Adj Close"], errors="coerce")
             invalid |= (~np.isfinite(adjusted_close) | (adjusted_close <= 0))
-        if "High" in clean and "Low" in clean:
-            high = pd.to_numeric(clean["High"], errors="coerce")
-            low = pd.to_numeric(clean["Low"], errors="coerce")
-            invalid |= high.notna() & low.notna() & (high < low)
+        if {"Open", "High", "Low", "Close"}.issubset(numeric_prices):
+            open_price = numeric_prices["Open"]
+            high = numeric_prices["High"]
+            low = numeric_prices["Low"]
+            invalid |= high < low
+            invalid |= high < pd.concat([open_price, close], axis=1).max(axis=1)
+            invalid |= low > pd.concat([open_price, close], axis=1).min(axis=1)
+        if "Volume" in clean:
+            volume = pd.to_numeric(clean["Volume"], errors="coerce")
+            # Missing volume is allowed; a negative volume is not.
+            invalid |= volume.notna() & (volume < 0)
         invalid_count = int(invalid.sum())
         # Keep the original invalid-row count in report but prevent invalid values from
         # contaminating technicals, price levels, returns, or position sizing.
