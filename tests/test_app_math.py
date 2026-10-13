@@ -1183,3 +1183,28 @@ def test_point_in_time_membership_filters_before_cross_sectional_factor_ranking(
     right = contemporaneous_universe.set_index("Ticker").sort_index()
     pd.testing.assert_series_equal(left["Momentum score"], right["Momentum score"])
     pd.testing.assert_series_equal(left["Fundamental/composite score"], right["Fundamental/composite score"])
+
+
+def test_backtest_never_selects_a_ticker_before_its_membership_start_date():
+    from qlab.strategy import run_monthly_backtest
+    from qlab.universe import parse_universe_membership
+
+    prices = synthetic_prices(1300)
+    history = parse_universe_membership(pd.DataFrame([
+        {"Ticker":"AAA","Start date":"2018-01-01","End date":""},
+        {"Ticker":"BBB","Start date":"2018-01-01","End date":""},
+        {"Ticker":"CCC","Start date":"2021-01-01","End date":""},
+    ]))
+    curve, metrics, audit = run_monthly_backtest(
+        prices=prices, top_n=2, cost_bps=10, initial=10_000,
+        min_adx=0, min_score=0, hysteresis=0, max_replacements=2,
+        use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
+        universe_history=history,
+    )
+    assert curve is not None and metrics is not None and audit is not None
+    decisions = pd.to_datetime(audit["Signal date"])
+    before_ccc = audit.loc[decisions < pd.Timestamp("2021-01-01"), "Selected holdings"]
+    assert before_ccc.map(lambda names: "CCC" not in names.split(", ")).all()
+    after_ccc = audit.loc[decisions >= pd.Timestamp("2021-01-01")]
+    assert not after_ccc.empty
+    assert (after_ccc["Eligible names"].str.split(", ").map(lambda names: "CCC" in names)).any()
