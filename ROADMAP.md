@@ -31,6 +31,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Zavést SEC snapshoty filtrované podle data zveřejnění a konzervativně odložit fakta zveřejněná v den uzavíracího signálu až na další rozhodovací den.
 - [x] Vypočítat roční růst tržeb/zisku, ROE proxy, marži, FCF a FCF marži z dostupných standardizovaných výkazů.
 - [x] Vykazovat fundamentální pokrytí a stav SEC dat; chybějící metriky zůstávají prázdné.
+- [x] Přidat samostatný FCFE-style DCF scénář s editovatelnými předpoklady a citlivostní tabulkou, oddělený od Composite score a obchodního backtestu.
+- [ ] Doložit měnové/jednotkové mapování FCF, počet akcií a quote price pro emitenta/ADR/dual-class před použitím DCF výsledku.
 - [x] Přidat časované CSV vstupy pro sentiment a analytické revize; historie používá poslední záznam známý k rozhodovacímu datu.
 - [ ] Ověřit SEC tagy, jednotky, fiskální roky, opravy výkazů, ADR a duální třídy pro reprezentativní vzorek.
 - [ ] Doplnit point-in-time mapování historie tickerů/CIK, segmentové metriky, sektorově srovnatelné metriky a transparentní zacházení se záporným vlastním kapitálem.
