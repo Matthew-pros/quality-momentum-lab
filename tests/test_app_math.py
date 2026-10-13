@@ -703,3 +703,20 @@ def test_atr_position_sizing_rejects_invalid_risk_inputs():
     screener = pd.DataFrame([{"Ticker":"AAA","Price":100.0,"ATR20":5.0}])
     with pytest.raises(ValueError, match="max_total_risk_pct"):
         calculate_position_sizes(screener, ["AAA"], 10_000, max_total_risk_pct=-1)
+
+
+def test_czech_40m_securities_cap_is_only_flagged_for_tax_year_2025():
+    from qlab.tax_lots import fifo_ledger
+
+    rows = []
+    for year, ticker in [(2024, "Y24"), (2025, "Y25"), (2026, "Y26")]:
+        rows.append({"Date":"2020-01-01","Ticker":ticker,"Type":"BUY","Quantity":100_000,"Price":100,"Fees":0,"Currency":"CZK"})
+        rows.append({"Date":f"{year}-09-01","Ticker":ticker,"Type":"SELL","Quantity":100_000,"Price":450,"Fees":0,"Currency":"CZK"})
+    realized, _, _ = fifo_ledger(pd.DataFrame(rows))
+    status_by_year = realized.groupby(realized["Sale date"].dt.year)["Tax review status"].agg(lambda x: " | ".join(x.astype(str)))
+    assert "40m" not in status_by_year.loc[2024].lower()
+    assert "2025 czk 40m time-test cap" in status_by_year.loc[2025].lower()
+    assert "40m" not in status_by_year.loc[2026].lower()
+    assert "§38v notice" in status_by_year.loc[2024]
+    assert "§38v notice" in status_by_year.loc[2025]
+    assert "§38v notice" in status_by_year.loc[2026]
