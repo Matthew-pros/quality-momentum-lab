@@ -144,16 +144,25 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                     realized_df.loc[long_enough, "Tax review status"] = (
                         "Potential 3-year time-test exemption (CZK 40m securities cap removed from 2026); verify eligibility"
                     )
-                    # The notification test is per exempt receipt/sale, not the yearly sum.
-                    exempt_by_sale = (
-                        group.loc[group["Holding period > 3 years"].astype(bool)]
-                        .groupby("Sale transaction ID")["Gross sale proceeds"].sum()
+
+                # The §38v notice threshold is per single exempt receipt, not the annual sum,
+                # and applies to exempt income in all relevant years. A sale can be split
+                # across several FIFO lots; aggregate the qualifying part by original sale ID.
+                exempt_by_sale = (
+                    group.loc[group["Holding period > 3 years"].astype(bool)]
+                    .groupby("Sale transaction ID")["Gross sale proceeds"].sum()
+                )
+                report_ids = set(exempt_by_sale[exempt_by_sale > 5_000_000].index)
+                notify_rows = long_enough & realized_df["Sale transaction ID"].isin(report_ids)
+                if int(year) <= 2025:
+                    notice_text = (
+                        "Potential §38v notice: single exempt sale receipt > CZK 5m; also review historic-year CZK 40m time-test cap"
                     )
-                    report_ids = set(exempt_by_sale[exempt_by_sale > 5_000_000].index)
-                    notify_rows = long_enough & realized_df["Sale transaction ID"].isin(report_ids)
-                    realized_df.loc[notify_rows, "Tax review status"] = (
+                else:
+                    notice_text = (
                         "Potential §38v notice: single exempt sale receipt > CZK 5m; verify exceptions and filing duty"
                     )
+                realized_df.loc[notify_rows, "Tax review status"] = notice_text
                 realized_df.loc[short_holds, "Tax review status"] = (
                     "Time test not met and value test exceeded: review taxable income, deductible costs, and applicable-year rules"
                 )
