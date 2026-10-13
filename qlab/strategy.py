@@ -458,53 +458,63 @@ def _simulate_position_month(
     stop_atr_multiple: float = 3.0,
     prior_high_water: float | None = None,
 ) -> tuple[float, str, str, float]:
-    """Simulate one holding segment with persistent high-water state.
+    """Simulate one holding segment on an adjusted-OHLC price basis.
 
-    Signal/bar times are month-end close. In daily stop modes, thresholds are computed
-    from information available through the previous close. If the next open gaps through
-    a stop, fill at that open; otherwise fill at the stop price when the day's low crosses
-    it. Daily OHLC cannot reveal the exact intraday ordering of the high and low, so the
-    high made on the current bar is deliberately not used to tighten that same bar's stop.
-    Returns segment return, exit reason, exit date and high-water mark to carry forward.
+    Stops use information through the previous close. A gap through the stop fills at
+    that adjusted open; otherwise a low crossing fills at the stop level. Daily bars
+    cannot identify intraday high/low ordering, so a current bar's high does not tighten
+    the stop applied to that same bar.
     """
     if frame is None or frame.empty:
         return np.nan, "MISSING", "", np.nan
     frame = frame.sort_index()
-    close = _num(frame.get("Close", pd.Series(index=frame.index, dtype=float)))
-    adjusted = _num(frame.get("Adj Close", close)).reindex(frame.index)
+    raw_close = _num(frame.get("Close", frame.get("Adj Close", pd.Series(index=frame.index, dtype=float))))
+    if raw_close.empty:
+        return np.nan, "MISSING", "", np.nan
+    adjusted_close = _num(frame.get("Adj Close", raw_close)).reindex(frame.index)
+    factor = (adjusted_close / raw_close).replace([np.inf, -np.inf], np.nan)
+
+    def adjusted_series(raw_name: str, adjusted_name: str) -> pd.Series:
+        if adjusted_name in frame:
+            values = _num(frame[adjusted_name]).reindex(frame.index)
+        elif raw_name in frame:
+            values = _num(frame[raw_name]).reindex(frame.index) * factor
+        else:
+            values = adjusted_close.copy()
+        return values.fillna(adjusted_close)
+
+    adjusted_open = adjusted_series("Open", "Adj Open")
+    adjusted_high = adjusted_series("High", "Adj High")
+    adjusted_low = adjusted_series("Low", "Adj Low")
     known = frame.index[frame.index <= signal_date]
     if len(known) == 0:
         return np.nan, "MISSING", "", np.nan
     entry_date = known[-1]
-    entry_close = float(close.loc[entry_date]) if pd.notna(close.loc[entry_date]) else np.nan
-    entry_adjusted = float(adjusted.loc[entry_date]) if pd.notna(adjusted.loc[entry_date]) else entry_close
-    if not np.isfinite(entry_close) or entry_close <= 0 or not np.isfinite(entry_adjusted) or entry_adjusted <= 0:
+    entry_adjusted = pd.to_numeric(pd.Series([adjusted_close.loc[entry_date]]), errors="coerce").iloc[0]
+    if not np.isfinite(entry_adjusted) or entry_adjusted <= 0:
+        return np.nan, "MISSING", "", np.nan
+    path_dates = frame.index[(frame.index > entry_date) & (frame.index <= return_period_end)]
+    if len(path_dates) == 0:
         return np.nan, "MISSING", "", np.nan
 
-    path = frame.loc[(frame.index > entry_date) & (frame.index <= return_period_end)]
-    if path.empty:
-        return np.nan, "MISSING", "", np.nan
-    # A fresh position starts with its entry close, not its pre-entry historical peak.
-    # An incumbent continues the high-water mark stored at the prior rebalance.
-    high_water = float(prior_high_water) if prior_high_water is not None and np.isfinite(prior_high_water) else entry_close
-    high_water = max(high_water, entry_close)
-
+    high_water = float(prior_high_water) if prior_high_water is not None and np.isfinite(prior_high_water) else float(entry_adjusted)
+    high_water = max(high_water, float(entry_adjusted))
     prior_atr = np.nan
     if indicators is not None and entry_date in indicators.index and "ATR20" in indicators:
         prior_atr = pd.to_numeric(pd.Series([indicators.loc[entry_date, "ATR20"]]), errors="coerce").iloc[0]
-
     daily_indicators = indicators if indicators is not None else pd.DataFrame()
-    for dt, bar in path.iterrows():
-        raw_close = pd.to_numeric(pd.Series([bar.get("Close", np.nan)]), errors="coerce").iloc[0]
-        raw_open = pd.to_numeric(pd.Series([bar.get("Open", raw_close)]), errors="coerce").iloc[0]
-        raw_low = pd.to_numeric(pd.Series([bar.get("Low", raw_close)]), errors="coerce").iloc[0]
-        raw_high = pd.to_numeric(pd.Series([bar.get("High", raw_close)]), errors="coerce").iloc[0]
-        if not np.isfinite(raw_close) or raw_close <= 0:
+
+    for dt in path_dates:
+        adj_close = pd.to_numeric(pd.Series([adjusted_close.loc[dt]]), errors="coerce").iloc[0]
+        adj_open = pd.to_numeric(pd.Series([adjusted_open.loc[dt]]), errors="coerce").iloc[0]
+        adj_low = pd.to_numeric(pd.Series([adjusted_low.loc[dt]]), errors="coerce").iloc[0]
+        adj_high = pd.to_numeric(pd.Series([adjusted_high.loc[dt]]), errors="coerce").iloc[0]
+        if not np.isfinite(adj_close) or adj_close <= 0:
             continue
-        if not np.isfinite(raw_open) or raw_open <= 0:
-            raw_open = raw_close
-        if not np.isfinite(raw_low) or raw_low <= 0:
-            raw_low = raw_close
+        if not np.isfinite(adj_open) or adj_open <= 0:
+            adj_open = adj_close
+        if not np.isfinite(adj_low) or adj_low <= 0:
+            adj_low = adj_close
 
         levels: list[tuple[str, float]] = []
         if stop_mode in {"ATR trailing stop", "ATR + daily 50-day low"} and np.isfinite(prior_atr) and prior_atr > 0:
@@ -516,31 +526,23 @@ def _simulate_position_month(
             if np.isfinite(low50) and low50 > 0:
                 levels.append(("Daily 50-day low", float(low50)))
         stop_level = max((level for _, level in levels), default=np.nan)
-        if np.isfinite(stop_level) and (raw_open <= stop_level or raw_low <= stop_level):
-            fill_raw = float(raw_open if raw_open <= stop_level else stop_level)
-            adj_current = pd.to_numeric(pd.Series([bar.get("Adj Close", raw_close)]), errors="coerce").iloc[0]
-            factor = float(adj_current / raw_close) if np.isfinite(adj_current) and adj_current > 0 else 1.0
-            fill_adjusted = fill_raw * factor
-            reason_names = [
-                name for name, level in levels
-                if np.isclose(level, stop_level, rtol=1e-8, atol=1e-8)
-            ]
-            reason = " + ".join(reason_names) if reason_names else "Daily stop"
-            return fill_adjusted / entry_adjusted - 1, reason, pd.Timestamp(dt).date().isoformat(), np.nan
+        if np.isfinite(stop_level) and (adj_open <= stop_level or adj_low <= stop_level):
+            fill_adjusted = float(adj_open if adj_open <= stop_level else stop_level)
+            names = [name for name, level in levels if np.isclose(level, stop_level, rtol=1e-8, atol=1e-8)]
+            reason = " + ".join(names) if names else "Daily stop"
+            return fill_adjusted / float(entry_adjusted) - 1, reason, pd.Timestamp(dt).date().isoformat(), np.nan
 
-        if np.isfinite(raw_high) and raw_high > 0:
-            high_water = max(high_water, float(raw_high))
+        if np.isfinite(adj_high) and adj_high > 0:
+            high_water = max(high_water, float(adj_high))
         if dt in daily_indicators.index and "ATR20" in daily_indicators:
             current_atr = pd.to_numeric(pd.Series([daily_indicators.loc[dt, "ATR20"]]), errors="coerce").iloc[0]
             if np.isfinite(current_atr) and current_atr > 0:
                 prior_atr = float(current_atr)
 
-    last_date = path.index[-1]
-    last_adj = adjusted.loc[last_date] if last_date in adjusted.index else np.nan
+    last_adj = adjusted_close.loc[path_dates[-1]]
     if pd.isna(last_adj) or not np.isfinite(float(last_adj)) or float(last_adj) <= 0:
         return np.nan, "MISSING", "", np.nan
-    return float(last_adj / entry_adjusted - 1), "HOLD", "", high_water
-
+    return float(last_adj / float(entry_adjusted) - 1), "HOLD", "", high_water
 
 def run_monthly_backtest(
     prices: dict[str, pd.DataFrame],
