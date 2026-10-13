@@ -485,7 +485,7 @@ with tab_strategy:
         elif saved.get("error") or saved.get("curve") is None:
             st.warning("Stop varianty nelze porovnat, dokud základní backtest nemá platný výsledek.")
         else:
-            benchmark_series = _daily_returns(price_data_all["SPY"]) if "SPY" in price_data_all else None
+            benchmark_series = _daily_returns(price_data_all[benchmark_ticker]) if benchmark_ticker in price_data_all else None
             with st.spinner("Porovnávám stop pravidla se stejnými vstupními parametry…"):
                 variants = compare_stop_variants(
                     prices=prices,
@@ -599,6 +599,8 @@ with tab_strategy:
 
 with tab_valuation:
     st.subheader("DCF / scénářová hodnota akcie")
+    if is_demo_mode:
+        st.warning("Jsi v demo režimu: zobrazovaná cena je syntetická, nikoli aktuální cena vybraného reálného tickeru. DCF scénář počítej až po vložení ověřeného FCF, počtu akcií a ceny ze stejné měny/třídy.")
     st.markdown(
         "Tato valuace je samostatný FCFE-style scénář; **nemění Composite score ani výběr pozic v backtestu**. Používá roční FCF proxy = provozní cash flow − capex, konstantní růst po zadaný počet let a terminální růst. Výsledek je velmi citlivý na předpoklady."
     )
