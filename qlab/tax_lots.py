@@ -20,8 +20,14 @@ def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
     out["Type"] = out["Type"].astype(str).str.upper().str.strip()
     out["Quantity"] = pd.to_numeric(out["Quantity"], errors="coerce")
     out["Price"] = pd.to_numeric(out["Price"], errors="coerce")
-    out["Fees"] = pd.to_numeric(out.get("Fees", 0.0), errors="coerce").fillna(0.0)
-    out["Currency"] = out.get("Currency", "USD")
+    if "Fees" in out:
+        out["Fees"] = pd.to_numeric(out["Fees"], errors="coerce").fillna(0.0)
+    else:
+        out["Fees"] = 0.0
+    if "Currency" not in out:
+        out["Currency"] = "USD"
+    else:
+        out["Currency"] = out["Currency"].fillna("USD").astype(str).str.upper()
     if out["Date"].isna().any():
         raise ValueError("One or more transaction dates could not be parsed.")
     if not out["Type"].isin(["BUY", "SELL"]).all():
