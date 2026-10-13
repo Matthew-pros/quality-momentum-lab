@@ -590,3 +590,13 @@ def test_czech_notification_threshold_is_per_sale_not_annual_total_and_respects_
     assert realized_multi["Gross sale proceeds"].sum() == pytest.approx(8_000_000)
     assert realized_multi["Sale transaction ID"].nunique() == 2
     assert not realized_multi["Tax review status"].str.contains("§38v notice").any()
+
+
+def test_sic_groups_are_explicit_coarse_groups_not_claimed_gics_sectors():
+    from qlab.data import sic_group
+
+    assert sic_group(3571) == "Manufacturing"
+    assert sic_group(6021) == "Finance / Insurance / Real Estate"
+    assert sic_group(7372) == "Services"
+    assert sic_group(None) == "Unclassified"
+    assert sic_group("not-a-code") == "Unclassified"
