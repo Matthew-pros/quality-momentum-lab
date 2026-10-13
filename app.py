@@ -489,6 +489,115 @@ with tab_strategy:
         st.caption("Rozdělení je chronologické 60/20/20 (train/validation/holdout), se stejnými parametry a bez optimalizace uvnitř jednotlivých částí. Holdout je opravdu nedotčený pouze tehdy, pokud parametry neupravuješ podle jeho výsledku.")
         st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Náklady nezahrnují plně spread, skluz, FX a daňový model.")
 
+with tab_valuation:
+    st.subheader("DCF / scénářová hodnota akcie")
+    st.markdown(
+        "Tato valuace je samostatný FCFE-style scénář; **nemění Composite score ani výběr pozic v backtestu**. Používá roční FCF proxy = provozní cash flow − capex, konstantní růst po zadaný počet let a terminální růst. Výsledek je velmi citlivý na předpoklady."
+    )
+    dcf_ticker = st.selectbox("Akcie k valuaci", screener["Ticker"].tolist(), key="dcf_ticker")
+    dcf_snapshot = fundamentals.get(dcf_ticker, {})
+    dcf_row = screener.loc[screener["Ticker"] == dcf_ticker].iloc[0]
+    sec_fcf = safe_float(dcf_snapshot.get("FCF"), 0.0)
+    sec_shares = safe_float(dcf_snapshot.get("Shares outstanding (reported)"), 1.0)
+    current_price = safe_float(dcf_row.get("Price"), 0.0)
+    revenue_growth = safe_float(dcf_snapshot.get("Revenue growth %"), 5.0)
+    default_growth = float(np.clip(revenue_growth, -20.0, 30.0))
+    st.caption(
+        f"Zdroj: {dcf_snapshot.get('Source', 'nenačteno')} · období: {dcf_snapshot.get('Financial period', '—') or '—'} · "
+        f"poslední podání: {dcf_snapshot.get('Latest filing date', '—') or '—'}"
+    )
+    if sec_fcf <= 0:
+        st.warning("V SEC snapshotu není k dispozici kladné roční FCF. Níže můžeš zadat vlastní normalizovanou hodnotu; negativní/kolísavé FCF není vhodné bez dalšího vysvětlení vložit do jednoduchého terminálního DCF.")
+    input_left, input_right = st.columns(2)
+    with input_left:
+        base_fcf = st.number_input(
+            "Normalizované roční FCF (v reportovací měně)",
+            min_value=0.0, value=max(0.0, sec_fcf), step=1_000_000.0, format="%.2f",
+            help="Předvyplněno z posledního dostupného ročního výkazu. Provozní cash flow minus capex není univerzální FCFE definice; zkontroluj výkaz."
+        )
+        shares_input = st.number_input(
+            "Počet akcií v oběhu (kusy)",
+            min_value=1.0, value=max(1.0, sec_shares), step=1_000_000.0, format="%.0f",
+            help="SEC snapshot může obsahovat zastaralý či jinak definovaný počet akcií. U ADR a více tříd je nutné ověřit poměr a odpovídající obchodovanou třídu."
+        )
+        quote_price = st.number_input(
+            "Aktuální cena podle screeneru",
+            min_value=0.0, value=max(0.0, current_price), step=1.0, format="%.4f",
+            help="Pro porovnání musí být cena a FCF/share inputs ve srovnatelných měnových a jednotkových konvencích."
+        )
+    with input_right:
+        growth_pct = st.slider("Růst FCF ročně (%)", -20.0, 30.0, default_growth, 1.0)
+        cost_equity_pct = st.slider("Náklady vlastního kapitálu (%)", 5.0, 25.0, 10.0, 0.5)
+        terminal_growth_pct = st.slider("Terminální růst (%)", 0.0, 4.0, 2.5, 0.25)
+        forecast_years = st.slider("Délka prognózy (roky)", 3, 10, 5)
+    confirmed_units = st.checkbox(
+        "Ověřil/a jsem, že FCF, počet akcií a cena jsou ve srovnatelných měnových a třídních jednotkách.",
+        value=False,
+        help="Aplikace nezná u každého XBRL faktu spolehlivou jednotku/ADR poměr a automaticky neprovádí FX konverzi."
+    )
+    if not confirmed_units:
+        st.info("Potvrď jednotky až po jejich kontrole. U zahraničního emitenta, ADR nebo dual-class akcie mohou FCF a cena být v různých měnách nebo odpovídat různým počtům akcií.")
+    elif base_fcf <= 0:
+        st.error("Zadej kladné normalizované FCF. Model s nulovým či záporným FCF a perpetuitním terminálním růstem by v této jednoduché podobě nebyl smysluplný.")
+    else:
+        try:
+            dcf_result = calculate_fcfe_dcf(
+                base_fcf=base_fcf,
+                annual_growth_rate=growth_pct / 100,
+                cost_of_equity=cost_equity_pct / 100,
+                terminal_growth_rate=terminal_growth_pct / 100,
+                years=forecast_years,
+                shares_outstanding=shares_input,
+            )
+            a,b,c1,d = st.columns(4)
+            a.metric("Modelová hodnota / akcii", f"{dcf_result['Implied value per share']:,.2f}")
+            b.metric("Aktuální cena", f"{quote_price:,.2f}")
+            upside = (dcf_result["Implied value per share"] / quote_price - 1) * 100 if quote_price > 0 else np.nan
+            c1.metric("Odchylka vůči ceně", "—" if not np.isfinite(upside) else f"{upside:+.1f}%")
+            d.metric("Terminální hodnota / PV", f"{dcf_result['Terminal value share %']:.1f}%")
+            details = pd.DataFrame([
+                {"Položka": "PV explicitního FCF", "Hodnota": dcf_result["PV forecast FCF"]},
+                {"Položka": "PV terminální hodnoty", "Hodnota": dcf_result["PV terminal value"]},
+                {"Položka": "Celková implikovaná hodnota equity", "Hodnota": dcf_result["Implied equity value"]},
+                {"Položka": "Použité FCF", "Hodnota": dcf_result["Base FCF"]},
+            ])
+            st.dataframe(details, width="stretch", hide_index=True, column_config={"Hodnota": st.column_config.NumberColumn(format="%.2f")})
+            growth_scenarios = sorted(set([
+                max(-0.20, (growth_pct - 5.0) / 100),
+                growth_pct / 100,
+                min(0.30, (growth_pct + 5.0) / 100),
+            ]))
+            discount_scenarios = sorted(set([
+                max(0.05, (cost_equity_pct - 2.0) / 100),
+                cost_equity_pct / 100,
+                min(0.25, (cost_equity_pct + 2.0) / 100),
+            ]))
+            sensitivity = dcf_sensitivity(
+                base_fcf=base_fcf, shares_outstanding=shares_input,
+                growth_rates=growth_scenarios, discount_rates=discount_scenarios,
+                terminal_growth_rate=terminal_growth_pct / 100, years=forecast_years,
+            )
+            st.markdown("#### Citlivost hodnoty na růst FCF a diskontní sazbu")
+            st.dataframe(sensitivity, width="stretch", hide_index=True, column_config={
+                "FCF growth %": st.column_config.NumberColumn(format="%.1f%%"),
+                **{column: st.column_config.NumberColumn(format="%.2f") for column in sensitivity.columns if column != "FCF growth %"},
+            })
+            matrix = sensitivity.set_index("FCF growth %")
+            heat = px.imshow(
+                matrix, aspect="auto", text_auto=".2f",
+                labels={"x": "Náklady vlastního kapitálu", "y": "Růst FCF (%)", "color": "Hodnota / akcii"},
+                title="DCF sensitivity · hodnota na akcii", template="plotly_dark",
+            )
+            heat.update_layout(height=330, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(heat, width="stretch")
+            st.download_button("Stáhnout DCF scénáře CSV", sensitivity.to_csv(index=False).encode("utf-8"), "dcf_sensitivity.csv", "text/csv")
+        except Exception as exc:
+            st.error(f"DCF scénář nešlo spočítat: {type(exc).__name__}: {exc}")
+    st.warning(
+        "DCF model je citlivý na předpoklady, nezohledňuje všechny účetní/finanční položky, dluhy v enterprise-value modelu, "
+        "měnové konverze ani rozdíly v ADR. Výstup není cenový cíl ani doporučení a není součástí obchodního skóre."
+    )
+
 with tab_portfolio:
     st.subheader("ATR position sizing a evidence lotů")
     st.markdown("Kalkulátor převádí maximální riziko na počet kusů při zadaném ATR stopu a limitech expozice. Nezadává pokyny brokerovi.")
