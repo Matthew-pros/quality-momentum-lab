@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, compare_stop_variants, industry_exposure_summary
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -470,6 +470,11 @@ with tab_strategy:
         "Vybrat parametry na tréninku a ověřit holdout",
         key="train_select_holdout_button",
         help="Porovná 9 variant min-score × hystereze pouze na prvních 60 % výnosové historie; na posledních 40 % ukáže pouze výsledky vítěze zvoleného tréninkovým Sharpe. Nejde o rolling walk-forward."
+    )
+    walk_forward_button = st.button(
+        "Spustit expanding walk-forward",
+        key="expanding_walk_forward_button",
+        help="V každém foldu vybere min-score a hysterezi jen z minulých dat, potom otestuje vítěze na neprolínajícím se šestíměsíčním OOS okně. Portfolio se na začátku každého OOS okna resetuje na hotovost a na konci se modelově zlikviduje."
     )
     saved = st.session_state.get("backtest_result")
     if run_backtest:
