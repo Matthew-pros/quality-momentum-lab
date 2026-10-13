@@ -477,7 +477,10 @@ with tab_portfolio:
 with tab_data:
     st.subheader("Kontrola kvality dat")
     st.markdown("Chybná data vedou k sebejistým, ale chybným výsledkům. Proto je zde samostatný panel zdrojů a úplnosti.")
-    data_cols = [c for c in ["Ticker","Status","Rows","First date","Last date","Missing %","Message"] if c in price_report.columns]
+    data_cols = [c for c in [
+        "Ticker", "Status", "Quality", "Rows", "First date", "Last date",
+        "Calendar days stale", "Missing %", "Invalid price rows", "Max abs daily return %", "Message"
+    ] if c in price_report.columns]
     st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430)
     st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
     combined = _download_frame(price_data_all)
@@ -496,8 +499,11 @@ with tab_data:
         st.download_button("Stáhnout SEC provenance CSV",sec_df.to_csv(index=False).encode("utf-8"),"sec_provenance.csv","text/csv")
     if price_report["Status"].eq("MISSING").any():
         st.error("Některé cenové řady chybí. Backtest se nesmí používat bez vyřešení dat.")
+    elif "Quality" in price_report and price_report["Quality"].eq("REVIEW").any():
+        flagged = price_report.loc[price_report["Quality"].eq("REVIEW"), "Ticker"].tolist()
+        st.warning("Některé řady vyžadují kontrolu (stáří dat, podezřelý pohyb nebo neplatné hodnoty): " + ", ".join(flagged))
     else:
-        st.success("Cenové řady byly vráceny pro všechny tickery označené jako dostupné při tomto stažení.")
+        st.success("V základní automatické kontrole nejsou zjištěné chybějící ani podezřelé cenové řady.")
     st.caption(f"Načteno v tomto běhu · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     st.caption("Dostupná historická řada neznamená ověřenou burzovní exekuci; poskytovatel může data opravit nebo omezit.")
 
