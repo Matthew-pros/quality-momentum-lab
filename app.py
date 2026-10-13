@@ -173,7 +173,7 @@ with st.sidebar:
         height=106,
         key="demo_universe" if is_demo_mode else "market_universe",
         disabled=is_demo_mode,
-        help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Po přepnutí na import CSV můžeš zadat skutečné tickery."
+        help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Při nahrání CSV historického členství se tickery z tohoto CSV stanou pro backtest autoritativním univerzem."
     )
     price_csv_upload = st.file_uploader(
         "Historie OHLCV CSV",
@@ -187,9 +187,21 @@ with st.sidebar:
         type=["csv"],
         key="universe_membership_csv",
         disabled=is_demo_mode or price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
-        help="Intervaly členství: Ticker,Start date,End date. End date může být prázdné pro otevřený interval. Zahrň do OHLCV všechna historická aktiva včetně delistovaných, máš-li jejich historii."
+        help="Intervaly členství: Ticker,Start date,End date. End date může být prázdné pro otevřený interval. Ticker list v souboru bude autoritativní; zahrň i později delistované tituly."
     )
-    st.caption("Point-in-time univerzum snižuje zkreslení pouze tehdy, když CSV obsahuje úplné historické členství a OHLCV řady všech tehdejších titulů včetně delistovaných.")
+    membership_template = pd.DataFrame([
+        {"Ticker":"AAA","Start date":"2015-01-01","End date":"2020-12-31"},
+        {"Ticker":"AAA","Start date":"2021-01-01","End date":""},
+        {"Ticker":"BBB","Start date":"2018-06-01","End date":""},
+    ])
+    st.download_button(
+        "Stáhnout šablonu členství CSV",
+        membership_template.to_csv(index=False).encode("utf-8"),
+        "universe_membership_template.csv", "text/csv",
+        disabled=is_demo_mode,
+        help="Jedna řádka na interval členství; Start/End jsou včetně uvedeného dne, prázdný End date znamená otevřený interval."
+    )
+    st.caption("Point-in-time univerzum snižuje survivorship bias pouze tehdy, když CSV obsahuje úplné historické členství i OHLCV řady všech tehdejších titulů včetně delistovaných.")
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
     if is_demo_mode:
         st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
@@ -257,8 +269,8 @@ universe_history_signature = "static-universe"
 if universe_history_upload is not None:
     try:
         universe_history = parse_universe_membership(io.BytesIO(universe_history_upload.getvalue()))
-        historical_tickers = tickers_in_membership_file(universe_history)
-        universe = list(dict.fromkeys(universe + [ticker for ticker in historical_tickers if ticker not in EXCLUDED_FUNDS]))
+        historical_tickers = [ticker for ticker in tickers_in_membership_file(universe_history) if ticker not in EXCLUDED_FUNDS]
+        universe = historical_tickers
         universe_history_signature = hashlib.sha256(universe_history_upload.getvalue()).hexdigest()
     except Exception as exc:
         st.error(f"Historické složení univerza není validní: {type(exc).__name__}: {exc}")
