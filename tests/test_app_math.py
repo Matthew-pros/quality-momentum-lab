@@ -806,3 +806,32 @@ def test_industry_exposure_summary_reports_weights_not_just_position_counts():
     assert summary.loc["Technology", "Rebalance months invested"] == 2
     assert summary.loc["Finance / Insurance / Real Estate", "Maximum weight %"] == pytest.approx(50.0)
     assert summary["Average weight %"].sum() == pytest.approx(100.0)
+
+
+def test_moving_block_bootstrap_is_reproducible_and_reports_observed_return_metrics():
+    from qlab.strategy import moving_block_bootstrap_uncertainty
+
+    curve = pd.DataFrame({
+        "Net return": [0.02, 0.01, -0.04, 0.03, 0.01, -0.01, 0.025, -0.005,
+                       0.015, 0.01, -0.02, 0.04, 0.02, -0.01, 0.015, 0.005,
+                       -0.03, 0.025, 0.01, 0.02, -0.015, 0.03, 0.012, -0.01],
+    }, index=pd.date_range("2024-01-31", periods=24, freq="ME"))
+    a = moving_block_bootstrap_uncertainty(curve, initial=10_000, bootstrap_samples=100, block_length=3, seed=7)
+    b = moving_block_bootstrap_uncertainty(curve, initial=10_000, bootstrap_samples=100, block_length=3, seed=7)
+    pd.testing.assert_frame_equal(a, b)
+    assert a["Metric"].tolist() == ["CAGR", "Sharpe (rf=0)", "Max drawdown", "Final equity"]
+    observed_final = 10_000 * np.prod(1 + curve["Net return"].to_numpy())
+    assert a.loc[a["Metric"] == "Final equity", "Observed"].iloc[0] == pytest.approx(observed_final)
+    assert (a["5th percentile"] <= a["Median bootstrap"]).all()
+    assert (a["Median bootstrap"] <= a["95th percentile"]).all()
+
+
+def test_moving_block_bootstrap_rejects_invalid_returns_and_too_few_samples():
+    from qlab.strategy import moving_block_bootstrap_uncertainty
+
+    curve = pd.DataFrame({"Net return":[0.01, -1.0, 0.02]})
+    with pytest.raises(ValueError, match="greater than -100%"):
+        moving_block_bootstrap_uncertainty(curve, bootstrap_samples=100, block_length=1)
+    good = pd.DataFrame({"Net return":[0.01] * 12})
+    with pytest.raises(ValueError, match="between 100 and 10,000"):
+        moving_block_bootstrap_uncertainty(good, bootstrap_samples=20, block_length=2)
