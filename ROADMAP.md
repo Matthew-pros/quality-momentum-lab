@@ -51,6 +51,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat volitelné výstupy: bez stopu, měsíční 50denní low, denní 50denní low, ATR trailing stop nebo obojí; denní verze zaznamenává stop a datum výstupu a používá konzervativní přibližné plnění z denního OHLC.
 - [x] Přidat citlivost CAGR/volatility/Sharpe/drawdown na různé náklady při zachování stejné historie signálů.
 - [x] Přidat 60/20/20 chronologické diagnostické rozdělení Train / Validation / Holdout včetně benchmarku (není to automatizovaný walk-forward optimizer; holdout zůstává nedotčený jen tehdy, pokud se parametry podle něj neupravují).
+- [x] Přidat reprodukovatelný moving-block bootstrap pro orientační intervaly CAGR, Sharpe, max drawdown a konečné hodnoty; intervaly jsou diagnostické, nikoli garance statistického pokrytí.
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
 - [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
 - [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
@@ -82,7 +83,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
 - [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
-- [ ] Reportovat nejistotu výkonu, volatilitu, drawdown, obrat, benchmark a expozice po sektorech/obdobích.
+- [x] Reportovat nejistotu pořadí měsíčních výnosů pomocí moving-block bootstrapu společně s volatilitou, drawdownem, obratem, benchmarkem a expozicemi.
+- [ ] Odhadnout statistickou významnost výhody při vícenásobném testování parametrů (deflated Sharpe / reality-check přístup) až s dostatečným bias-free datasetem.
 - [ ] Dokumentovat licence zdrojů, limity pokrytí, reprodukční postup a povinné varování veřejného UI.
 
 **Podmínka release 1.0:** žádné tvrzení o strategické výhodě bez out-of-sample důkazu; žádné automatické obchodní pokyny; jasné oddělení zdrojových dat, skóre, simulace a osobního rozhodnutí.
