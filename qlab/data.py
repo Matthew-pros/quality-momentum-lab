@@ -133,12 +133,49 @@ def download_market_data(tickers: str | list[str], period: str = "10y") -> tuple
             except Exception:
                 continue
     report = pd.DataFrame(reports)
-    for ticker in prices:
-        if not report.empty and (report["Ticker"] == ticker).any():
-            report.loc[report["Ticker"] == ticker, ["Status", "Rows", "First date", "Last date", "Missing %", "Message"]] = [
-                "OK", len(prices[ticker]), prices[ticker].index.min().date().isoformat(),
-                prices[ticker].index.max().date().isoformat(), round(prices[ticker]["Close"].isna().mean() * 100, 2), ""
-            ]
+    now = pd.Timestamp.now().normalize()
+    for ticker in symbols:
+        frame = prices.get(ticker)
+        if report.empty or not (report["Ticker"] == ticker).any():
+            continue
+        if frame is None or frame.empty:
+            report.loc[report["Ticker"] == ticker, "Quality"] = "MISSING"
+            report.loc[report["Ticker"] == ticker, "Calendar days stale"] = np.nan
+            report.loc[report["Ticker"] == ticker, "Invalid price rows"] = np.nan
+            report.loc[report["Ticker"] == ticker, "Max abs daily return %"] = np.nan
+            continue
+        close = pd.to_numeric(frame["Close"], errors="coerce")
+        adj_close = pd.to_numeric(frame.get("Adj Close", close), errors="coerce")
+        invalid = (~np.isfinite(close) | (close <= 0))
+        if "High" in frame and "Low" in frame:
+            high = pd.to_numeric(frame["High"], errors="coerce")
+            low = pd.to_numeric(frame["Low"], errors="coerce")
+            invalid |= high.notna() & low.notna() & (high < low)
+        daily_returns = adj_close.pct_change(fill_method=None).replace([np.inf, -np.inf], np.nan).dropna()
+        max_move = float(daily_returns.abs().max() * 100) if not daily_returns.empty else np.nan
+        last_date = pd.Timestamp(frame.index.max()).tz_localize(None).normalize() if pd.Timestamp(frame.index.max()).tzinfo else pd.Timestamp(frame.index.max()).normalize()
+        stale_days = max(0, int((now - last_date).days))
+        invalid_count = int(invalid.sum())
+        quality = "OK"
+        flags = []
+        if stale_days > 7:
+            quality = "REVIEW"
+            flags.append(f"stale {stale_days} calendar days")
+        if invalid_count:
+            quality = "REVIEW"
+            flags.append(f"{invalid_count} invalid price rows")
+        if pd.notna(max_move) and max_move >= 30:
+            quality = "REVIEW"
+            flags.append(f"large daily return {max_move:.1f}%")
+        report.loc[report["Ticker"] == ticker, ["Status", "Rows", "First date", "Last date", "Missing %", "Calendar days stale", "Invalid price rows", "Max abs daily return %", "Quality"]] = [
+            "OK", int(close.notna().sum()), frame.index.min().date().isoformat(), frame.index.max().date().isoformat(),
+            round(float(close.isna().mean() * 100), 2), stale_days, invalid_count, max_move, quality
+        ]
+        message = "; ".join(flags)
+        report.loc[report["Ticker"] == ticker, "Message"] = message
+    for col in ["Rows", "Calendar days stale", "Invalid price rows", "Max abs daily return %", "Missing %"]:
+        if col in report:
+            report[col] = pd.to_numeric(report[col], errors="coerce")
     return prices, report
 
 
