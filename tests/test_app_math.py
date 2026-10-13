@@ -1377,3 +1377,34 @@ def test_annual_series_selects_one_unit_instead_of_mixing_parallel_currency_obse
     assert result.attrs["unit"] == "USD"
     assert result.to_list() == [100.0, 150.0]
     assert result.iloc[-1] != 1200.0
+
+
+def test_price_quality_report_uses_last_valid_bar_and_marks_fully_invalid_ticker_missing():
+    from qlab.data import assess_price_quality
+
+    index = pd.to_datetime(["2026-10-08","2026-10-09","2026-10-12","2026-10-13"])
+    partially_invalid = pd.DataFrame({
+        "Open":[10.0,10.0,10.0,0.0],
+        "High":[11.0,11.0,11.0,0.0],
+        "Low":[9.0,9.0,9.0,0.0],
+        "Close":[10.0,10.5,10.8,0.0],
+        "Adj Close":[10.0,10.5,10.8,0.0],
+    },index=index)
+    fully_invalid = pd.DataFrame({
+        "Open":[0.0,0.0],"High":[0.0,0.0],"Low":[0.0,0.0],
+        "Close":[0.0,np.nan],"Adj Close":[0.0,np.nan],
+    },index=pd.to_datetime(["2026-10-12","2026-10-13"]))
+    report = pd.DataFrame([
+        {"Ticker":"AAA","Status":"OK","Rows":4,"First date":"2026-10-08","Last date":"2026-10-13","Missing %":0.0,"Message":""},
+        {"Ticker":"BAD","Status":"OK","Rows":2,"First date":"2026-10-12","Last date":"2026-10-13","Missing %":0.0,"Message":""},
+    ])
+    sanitized, out = assess_price_quality({"AAA":partially_invalid,"BAD":fully_invalid},report,now="2026-10-13")
+    aa=out.set_index("Ticker").loc["AAA"]
+    bad=out.set_index("Ticker").loc["BAD"]
+    assert aa["Last date"] == "2026-10-12"
+    assert aa["Rows"] == 3
+    assert pd.isna(sanitized["AAA"].loc[pd.Timestamp("2026-10-13"),"Close"])
+    assert bad["Status"] == "MISSING"
+    assert bad["Rows"] == 0
+    assert bad["Missing %"] == 100.0
+    assert not pd.to_numeric(sanitized["BAD"]["Close"],errors="coerce").notna().any()
