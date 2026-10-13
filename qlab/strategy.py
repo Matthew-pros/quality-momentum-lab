@@ -767,6 +767,76 @@ def cost_sensitivity(
     return pd.DataFrame(rows)
 
 
+def chronological_period_summary(
+    curve: pd.DataFrame,
+    initial: float = 10_000,
+    train_fraction: float = 0.60,
+    validation_fraction: float = 0.20,
+) -> pd.DataFrame:
+    """Summarize a fixed strategy across chronological train/validation/holdout periods.
+
+    This is a diagnostic split, not an automated walk-forward parameter optimizer.
+    The holdout is genuinely untouched only if the operator does not adjust strategy
+    settings after examining it.
+    """
+    if curve is None or curve.empty:
+        return pd.DataFrame()
+    if "Net return" not in curve:
+        raise ValueError("Curve is missing Net return.")
+    if not (0 < train_fraction < 1) or not (0 <= validation_fraction < 1):
+        raise ValueError("Train and validation fractions must be between 0 and 1.")
+    if train_fraction + validation_fraction >= 1:
+        raise ValueError("Train plus validation fractions must leave a non-empty holdout.")
+    returns = pd.to_numeric(curve["Net return"], errors="coerce")
+    if returns.isna().any():
+        raise ValueError("Cannot split a curve with missing net returns.")
+    n = len(returns)
+    train_end = int(np.floor(n * train_fraction))
+    validation_end = int(np.floor(n * (train_fraction + validation_fraction)))
+    bounds = [
+        ("Train", 0, train_end),
+        ("Validation", train_end, validation_end),
+        ("Holdout", validation_end, n),
+    ]
+    rows = []
+    for label, start, end in bounds:
+        part = curve.iloc[start:end]
+        part_returns = returns.iloc[start:end]
+        if part.empty:
+            continue
+        wealth = float(initial) * (1 + part_returns).cumprod()
+        total_return = float((1 + part_returns).prod() - 1)
+        years = len(part_returns) / 12.0
+        cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 and total_return > -1 else np.nan
+        volatility = float(part_returns.std(ddof=1) * np.sqrt(12)) if len(part_returns) > 1 else np.nan
+        sharpe = float(part_returns.mean() * 12 / volatility) if pd.notna(volatility) and volatility > 0 else np.nan
+        wealth_with_initial = np.r_[float(initial), wealth.to_numpy()]
+        peaks = np.maximum.accumulate(wealth_with_initial)[1:]
+        drawdown = wealth.to_numpy() / peaks - 1
+        row = {
+            "Period": label,
+            "Start date": pd.Timestamp(part.index[0]).date().isoformat(),
+            "End date": pd.Timestamp(part.index[-1]).date().isoformat(),
+            "Months": int(len(part)),
+            "Total return": total_return,
+            "CAGR": cagr,
+            "Volatility": volatility,
+            "Sharpe (rf=0)": sharpe,
+            "Max drawdown": float(np.min(drawdown)),
+            "Average turnover %": float(pd.to_numeric(part.get("Gross turnover", pd.Series(0, index=part.index)), errors="coerce").mean() * 100),
+            "Average exposure %": float(pd.to_numeric(part.get("Gross exposure %", pd.Series(0, index=part.index)), errors="coerce").mean()),
+            "Stops triggered": int(pd.to_numeric(part.get("Stops triggered", pd.Series(0, index=part.index)), errors="coerce").fillna(0).sum()),
+        }
+        if "Benchmark return" in part:
+            benchmark_returns = pd.to_numeric(part["Benchmark return"], errors="coerce").dropna()
+            row["Benchmark CAGR"] = (
+                float((1 + benchmark_returns).prod() ** (12 / len(benchmark_returns)) - 1)
+                if len(benchmark_returns) and (1 + benchmark_returns).prod() > 0 else np.nan
+            )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def calculate_position_sizes(
     screener: pd.DataFrame,
     selected_tickers: list[str],
