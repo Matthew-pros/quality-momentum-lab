@@ -26,6 +26,44 @@ def normalize_tickers(text_or_tickers: str | list[str]) -> list[str]:
     return list(dict.fromkeys(str(x).strip().upper() for x in raw if str(x).strip()))
 
 
+def validate_usd_price_basis(
+    tickers: list[str] | tuple[str, ...],
+    currencies: dict[str, str],
+    confirm_unknown_usd: bool = False,
+    missing_tickers: list[str] | tuple[str, ...] = (),
+) -> dict[str, object]:
+    """Validate that portfolio-valued calculations have a common USD price basis.
+
+    This function never converts currencies. Missing metadata can only be treated
+    as USD after an explicit user attestation; known non-USD codes cannot be
+    overridden by that attestation.
+    """
+    symbols = normalize_tickers(list(tickers))
+    missing = sorted(set(normalize_tickers(list(missing_tickers))) & set(symbols))
+    unknown_codes = {"", "UNKNOWN", "NAN", "NONE", "<NA>"}
+    unknown = sorted(
+        ticker for ticker in symbols
+        if ticker not in missing and str(currencies.get(ticker, "UNKNOWN")).strip().upper() in unknown_codes
+    )
+    non_usd_pairs = {
+        (ticker, str(currencies[ticker]).strip().upper())
+        for ticker in symbols
+        if ticker in currencies
+        and str(currencies[ticker]).strip().upper() not in unknown_codes | {"USD"}
+    }
+    non_usd_currencies = sorted({currency for _, currency in non_usd_pairs})
+    confirmed_unknown = bool(confirm_unknown_usd)
+    ready = not missing and not non_usd_currencies and (not unknown or confirmed_unknown)
+    return {
+        "ready": ready,
+        "missing_tickers": missing,
+        "unknown_tickers": unknown,
+        "non_usd_currencies": non_usd_currencies,
+        "confirm_unknown_usd": confirmed_unknown,
+        "basis": "USD" if ready else "Unverified / incompatible",
+    }
+
+
 def _extract_ticker_frame(raw: pd.DataFrame, ticker: str, all_tickers: list[str]) -> pd.DataFrame:
     if raw is None or raw.empty:
         return pd.DataFrame()
