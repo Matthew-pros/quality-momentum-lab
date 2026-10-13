@@ -394,3 +394,16 @@ def test_sec_history_reprices_between_filings_without_changing_reported_fundamen
     assert history.iloc[1]["As of"] == "2023-04-30"
     assert history.iloc[1]["Estimated market cap"] == pytest.approx(2 * history.iloc[0]["Estimated market cap"])
     assert history.iloc[1]["P/E (annual EPS proxy)"] == pytest.approx(2 * history.iloc[0]["P/E (annual EPS proxy)"])
+
+
+def test_cost_sensitivity_keeps_signals_fixed_and_higher_cost_lowers_terminal_equity():
+    from qlab.strategy import cost_sensitivity
+
+    curve = pd.DataFrame({
+        "Gross return": [0.03, -0.02, 0.04, 0.01],
+        "Gross turnover": [1.0, 0.2, 0.5, 0.4],
+    }, index=pd.date_range("2024-01-31", periods=4, freq="ME"))
+    table = cost_sensitivity(curve, initial=10_000, cost_scenarios_bps=(0, 15, 50))
+    assert table.loc[table["Cost (bps)"] == 0, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0]
+    assert table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 50, "Final equity"].iloc[0]
+    assert table["Average monthly turnover %"].nunique() == 1
