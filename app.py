@@ -443,7 +443,7 @@ with tab_strategy:
         j.metric("Výstupy z pozic", str(metrics["Exit events"]))
         avg_days = metrics["Average holding days (closed positions)"]
         k.metric("Průměrná doba držení", "—" if pd.isna(avg_days) else f"{avg_days:.0f} dní")
-        l.metric("Stop výstupy", str(int(curve["Stops triggered"].sum())))
+        l.metric("Denní stop výstupy", str(int(curve["Stops triggered"].sum())))
         equity_fig = go.Figure()
         equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Equity"],name="Strategie",line=dict(width=2.5,color="#72e0c1")))
         if "Benchmark equity" in curve:
