@@ -198,6 +198,9 @@ def prepare_screener(
         row = {
             "Ticker": ticker,
             "Company": f.get("Company", ticker),
+            "SIC group": f.get("SIC group", "Unclassified"),
+            "SEC SIC": f.get("SEC SIC", np.nan),
+            "SEC SIC Description": f.get("SEC SIC Description", ""),
             "Source": f.get("Source", "Prices only"),
             "Financial period": f.get("Financial period", ""),
             "Latest filing date": f.get("Latest filing date", ""),
