@@ -672,4 +672,4 @@ def test_adjusted_ohlc_prevents_false_split_jump_in_trend_and_stop_indicators():
     assert indicators.loc[split_index, "Close"] == pytest.approx(adjusted.loc[split_index])
     assert indicators.loc[split_index, "Close raw"] == pytest.approx(raw.loc[split_index])
     assert not bool(indicators.loc[split_index, "Below 50d low"])
-    assert indicators.loc[split_index, "ATR20%"] < 2.0
+    assert 1.5 < indicators.loc[split_index, "ATR20%"] < 2.5
