@@ -348,10 +348,15 @@ with tab_strategy:
                     fund_histories = _make_fundamental_history(prices, sec_bundles, use_estimated_value)
                 all_closes = pd.DataFrame({t: f["Adj Close"] if "Adj Close" in f else f["Close"] for t,f in prices.items() if not f.empty})
                 monthly_dates = list(all_closes.resample("ME").last().dropna(how="all").index)
-                if sentiment_df is not None:
-                    optional_histories.update(signal_history(sentiment_df, "Sentiment score", monthly_dates))
-                if revision_df is not None:
-                    optional_histories.update(signal_history(revision_df, "Revision score", monthly_dates))
+                sentiment_history = signal_history(sentiment_df, "Sentiment score", monthly_dates) if sentiment_df is not None else {}
+                revision_history = signal_history(revision_df, "Revision score", monthly_dates) if revision_df is not None else {}
+                for ticker in set(sentiment_history) | set(revision_history):
+                    pieces = []
+                    if ticker in sentiment_history:
+                        pieces.append(sentiment_history[ticker])
+                    if ticker in revision_history:
+                        pieces.append(revision_history[ticker])
+                    optional_histories[ticker] = pd.concat(pieces, axis=1)
                 curve, metrics, audit = run_monthly_backtest(
                     prices=prices, benchmark=benchmark_series, top_n=top_n, cost_bps=cost_bps,
                     initial=capital, min_adx=min_adx, min_score=min_score, hysteresis=hysteresis,
