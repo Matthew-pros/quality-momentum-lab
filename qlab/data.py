@@ -111,10 +111,12 @@ def download_market_data(tickers: str | list[str], period: str = "10y") -> tuple
             "Missing %": round(float(frame["Close"].isna().mean() * 100), 2) if not frame.empty else 100.0,
             "Message": message if message else ("" if not frame.empty else "Provider returned no rows for this ticker"),
         })
-    # If a batch unexpectedly yields no usable symbols, make a small sequential
-    # fallback. It is intentionally not threaded to reduce contention/rate pressure.
-    if not prices and len(symbols) > 1:
+    # Retry only missing symbols, sequentially: the logs showed a per-symbol
+    # "database is locked" error while the old UI also made parallel .info calls.
+    if len(prices) < len(symbols):
         for ticker in symbols:
+            if ticker in prices:
+                continue
             try:
                 one = yf.download(
                     tickers=ticker, period=period, auto_adjust=False, actions=False,
