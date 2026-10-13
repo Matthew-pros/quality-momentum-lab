@@ -353,7 +353,8 @@ def load_ohlcv_csv(
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
     """Load a user-supplied long-format OHLCV CSV without reaching an external price API.
 
-    Required columns: Date, Ticker, Open, High, Low, Close. Optional: Adj Close, Volume.
+    Required columns: Date, Ticker, Open, High, Low, Close. Optional: Adj Close, Volume, Currency.
+    Currency is validated per ticker and exposed as frame metadata/report data. It does not convert prices.
     If Adj Close is absent, Close is used as a clearly documented non-dividend-adjusted proxy.
     Duplicate ticker/date rows are rejected instead of being silently discarded.
     """
@@ -378,6 +379,8 @@ def load_ohlcv_csv(
     for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
         if column in raw:
             raw[column] = pd.to_numeric(raw[column], errors="coerce")
+    if "Currency" in raw:
+        raw["Currency"] = raw["Currency"].astype("string").str.upper().str.strip().replace("", pd.NA)
     if "Adj Close" not in raw:
         raw["Adj Close"] = raw["Close"]
         adj_note = "Adj Close absent: momentum uses Close and does not include dividend adjustments."
@@ -389,11 +392,27 @@ def load_ohlcv_csv(
         items = ", ".join(f"{r.Ticker}@{pd.Timestamp(r.Date).date()}" for r in samples.itertuples(index=False))
         raise ValueError(f"Duplicate ticker/date observations detected: {items}. Resolve duplicates in the CSV.")
     prices: dict[str, pd.DataFrame] = {}
+    currency_by_ticker: dict[str, str] = {}
     for ticker, part in raw.groupby("Ticker", sort=True):
+        currency = "UNKNOWN"
+        if "Currency" in part:
+            if part["Currency"].isna().any():
+                raise ValueError(
+                    f"{ticker}: Currency is blank on one or more rows. Supply the ticker's currency consistently for all rows, "
+                    "or omit the Currency column and confirm the common USD basis in the application."
+                )
+            currencies = sorted(set(part["Currency"].astype(str).str.upper()))
+            if len(currencies) != 1:
+                raise ValueError(f"{ticker}: Currency changes within the imported series: {', '.join(currencies)}.")
+            currency = currencies[0]
+            if not currency.isalpha() or not (3 <= len(currency) <= 5):
+                raise ValueError(f"{ticker}: invalid Currency code {currency!r}. Use a code such as USD, EUR, GBP or CZK.")
+        currency_by_ticker[ticker] = currency
         part = part.sort_values("Date").set_index("Date")
         fields = [column for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"] if column in part.columns]
         frame = part[fields].copy()
         frame = _add_adjusted_ohlc(frame)
+        frame.attrs["currency"] = currency
         prices[ticker] = frame
 
     report_tickers = normalize_tickers(expected_tickers or list(prices))
@@ -403,13 +422,15 @@ def load_ohlcv_csv(
         frame = prices.get(ticker)
         if frame is None or frame.empty:
             report_rows.append({
-                "Ticker": ticker, "Status": "MISSING", "Rows": 0, "First date": "", "Last date": "",
+                "Ticker": ticker, "Currency": currency_by_ticker.get(ticker, "UNKNOWN"),
+                "Status": "MISSING", "Rows": 0, "First date": "", "Last date": "",
                 "Missing %": 100.0, "Message": "Ticker not present in uploaded CSV" + (f"; {adj_note}" if adj_note else ""),
             })
             continue
         close = pd.to_numeric(frame["Close"], errors="coerce")
         report_rows.append({
-            "Ticker": ticker, "Status": "OK", "Rows": int(close.notna().sum()),
+            "Ticker": ticker, "Currency": currency_by_ticker.get(ticker, "UNKNOWN"),
+            "Status": "OK", "Rows": int(close.notna().sum()),
             "First date": frame.index.min().date().isoformat(), "Last date": frame.index.max().date().isoformat(),
             "Missing %": round(float(close.isna().mean() * 100), 2),
             "Message": adj_note,
