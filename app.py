@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import download_market_data, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
+from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
@@ -142,8 +142,24 @@ with st.sidebar:
     st.markdown("### QUALITY MOMENTUM LAB")
     st.caption(f"Research console · build {APP_VERSION}")
     ticker_text = st.text_area("Investiční univerzum", DEFAULT_UNIVERSE, height=106)
+    price_provider = st.selectbox(
+        "Zdroj cenových dat",
+        ["Yahoo Finance / yfinance (experimentální)", "Import OHLCV CSV (vlastní/licencovaná data)"],
+        index=0,
+        help="Yahoo může vracet HTTP 401 Invalid Crumb nebo omezit přístup. Pro spolehlivý veřejný provoz použij zdroj s povolenou licencí nebo vlastní historické CSV."
+    )
+    price_csv_upload = st.file_uploader(
+        "Historie OHLCV CSV",
+        type=["csv"],
+        key="ohlcv_csv",
+        disabled=price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
+        help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume. Jedna řádka na ticker a datum."
+    )
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
-    st.caption("Ceny: Yahoo Finance přes neoficiální yfinance klient. Ověř podmínky poskytovatele pro veřejné použití.")
+    if price_provider.startswith("Yahoo"):
+        st.warning("Yahoo Finance je neoficiální zdroj a podle logu může vracet HTTP 401 Invalid Crumb. Je ponechán jako experimentální fallback, nikoli jako garantovaný produkční feed.")
+    else:
+        st.caption("CSV režim nevolá žádný externí cenový API endpoint. Ujisti se, že máš právo data použít a že historie pokrývá celé testované období.")
     st.divider()
     st.subheader("SEC fundamenty")
     sec_email = st.text_input("Kontaktní e-mail pro SEC EDGAR", value=_secret_email(),
@@ -194,11 +210,20 @@ for ticker in set(sentiment_latest) | set(revision_latest):
     merged.update(revision_latest.get(ticker, {}))
     optional_latest[ticker] = merged
 
-with st.spinner("Načítám cenová data v dávce, bez paralelních požadavků…"):
+with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     try:
-        price_data_all, price_report = cached_market_data(symbols, period)
+        if price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
+            if price_csv_upload is None:
+                st.info("Vybraný je CSV režim. Nahraj historii OHLCV v levém panelu a případně uprav investiční univerzum tak, aby odpovídalo tickerům v souboru.")
+                st.stop()
+            price_data_all, price_report = load_ohlcv_csv(
+                io.BytesIO(price_csv_upload.getvalue()),
+                expected_tickers=list(symbols),
+            )
+        else:
+            price_data_all, price_report = cached_market_data(symbols, period)
     except Exception as exc:
-        st.error(f"Stahování cen selhalo: {type(exc).__name__}: {exc}")
+        st.error(f"Načítání cen selhalo: {type(exc).__name__}: {exc}")
         st.stop()
 prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
 if not prices:
