@@ -1053,3 +1053,34 @@ def test_terminal_liquidation_cost_uses_end_nav_and_trades_remaining_exposure():
     assert out.iloc[0]["Terminal liquidation cost"] == pytest.approx(expected_cash_cost / 1_000.0)
     assert out.iloc[0]["Terminal liquidation turnover"] == pytest.approx(0.80 * 1_100.0 / 1_000.0)
     assert out.iloc[0]["Gross turnover"] == pytest.approx(0.20 + 0.80 * 1_100.0 / 1_000.0)
+
+
+def test_precomputed_monthly_cross_sections_match_direct_backtest_results():
+    from qlab.strategy import (
+        _precompute_indicator_cache, _precompute_monthly_cross_sections, run_monthly_backtest,
+    )
+
+    prices = synthetic_prices(900)
+    indicator_cache = _precompute_indicator_cache(prices)
+    monthly_cross = _precompute_monthly_cross_sections(prices, indicator_cache=indicator_cache)
+    assert monthly_cross
+    direct_curve, direct_metrics, direct_audit = run_monthly_backtest(
+        prices=prices, top_n=2, cost_bps=10, initial=10_000,
+        min_adx=0, min_score=0, hysteresis=7, max_replacements=1,
+        use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
+    )
+    cached_curve, cached_metrics, cached_audit = run_monthly_backtest(
+        prices=prices, top_n=2, cost_bps=10, initial=10_000,
+        min_adx=0, min_score=0, hysteresis=7, max_replacements=1,
+        use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
+        precomputed_indicators=indicator_cache,
+        precomputed_cross_sections=monthly_cross,
+    )
+    pd.testing.assert_frame_equal(direct_curve, cached_curve)
+    pd.testing.assert_frame_equal(direct_audit, cached_audit)
+    assert direct_metrics.keys() == cached_metrics.keys()
+    for key in direct_metrics:
+        if pd.isna(direct_metrics[key]):
+            assert pd.isna(cached_metrics[key])
+        else:
+            assert cached_metrics[key] == pytest.approx(direct_metrics[key])
