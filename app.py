@@ -16,6 +16,7 @@ from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map,
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
+from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
 APP_VERSION = "2.0.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
@@ -297,8 +298,8 @@ if not use_estimated_value:
 if sentiment_df is None and revision_df is None:
     st.caption("Sentiment a revize analytických odhadů jsou vypnuté, dokud není přiložen historicky časovaný zdroj.")
 
-tab_overview, tab_screener, tab_strategy, tab_portfolio, tab_data, tab_method = st.tabs([
-    "Přehled", "Screener", "Strategie & backtest", "Portfolio & loty", "Kvalita dat", "Metodika"
+tab_overview, tab_screener, tab_strategy, tab_valuation, tab_portfolio, tab_data, tab_method = st.tabs([
+    "Přehled", "Screener", "Strategie & backtest", "DCF valuace", "Portfolio & loty", "Kvalita dat", "Metodika"
 ])
 
 with tab_overview:
