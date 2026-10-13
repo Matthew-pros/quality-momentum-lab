@@ -377,8 +377,9 @@ with tab_screener:
     if selected_ticker in prices:
         frame = prices[selected_ticker]
         indicators = calculate_indicators(frame)
-        st.plotly_chart(_equity_chart(frame["Close"].dropna(), indicators["MA50"], indicators["MA200"],
-            f"{selected_ticker} · Close / MA50 / MA200"), width="stretch")
+        chart_close = frame["Adj Close"].dropna() if "Adj Close" in frame else frame["Close"].dropna()
+        st.plotly_chart(_equity_chart(chart_close, indicators["MA50"], indicators["MA200"],
+            f"{selected_ticker} · Adjusted close / MA50 / MA200"), width="stretch")
         row = screener.loc[screener["Ticker"] == selected_ticker].iloc[0]
         a,b,c,d = st.columns(4)
         a.metric("Composite", "—" if pd.isna(row["Fundamental/composite score"]) else f"{row['Fundamental/composite score']:.1f}/100")
