@@ -46,6 +46,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat volbu Equal Weight vs. Inverse ATR se stropem váhy, neinvestovaný zbytek zůstává v hotovosti.
 - [x] Přidat volitelné výstupy: bez stopu, měsíční 50denní low, denní 50denní low, ATR trailing stop nebo obojí; denní verze zaznamenává stop a datum výstupu a používá konzervativní přibližné plnění z denního OHLC.
 - [x] Přidat citlivost CAGR/volatility/Sharpe/drawdown na různé náklady při zachování stejné historie signálů.
+- [x] Přidat 60/20/20 chronologické diagnostické rozdělení Train / Validation / Holdout včetně benchmarku (není to automatizovaný walk-forward optimizer; holdout zůstává nedotčený jen tehdy, pokud se parametry podle něj neupravují).
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
 - [ ] Nahradit hrubý close-to-close cost proxy realistickým modelem exekuce: přesné open/close fill, bid/ask spread, skluz, komise, likvidita, FX, dividendy a corporate actions.
 - [ ] Přidat walk-forward, oddělený vývojový/testovací vzorek, benchmarky napříč regiony a report sektorových/regime expozic.
