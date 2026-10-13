@@ -444,7 +444,9 @@ with tab_portfolio:
         st.download_button("Stáhnout plán pozic CSV",sizes.to_csv(index=False).encode("utf-8"),"position_sizing.csv","text/csv")
     st.divider()
     st.markdown("#### FIFO tax-lot ledger")
-    st.write("Nahraj historii transakcí. Výpočet páruje prodeje s nejstaršími nákupními loty, započítá dodané poplatky a ukáže realizovaný zisk/ztrátu i zbylé loty. Neaplikuje české daňové osvobození, sazby, časové testy ani přepočet měn.")
+    st.write("Nahraj historii transakcí. FIFO páruje prodeje s nejstaršími nákupními loty, započítá dodané poplatky a ukáže realizovaný zisk/ztrátu, hrubé prodeje i zbylé loty.")
+    st.info("Daňové štítky jsou pouze orientační: pro prodeje v CZK označí roční hodnotový test do 100 000 Kč nebo splnění tříletého časového testu. U jiných měn nepočítají automaticky konverzi do CZK. Aplikace neurčuje výslednou daň, daňovou sazbu ani přiznání; je nutné prověřit úplnost portfolia a zákonné výjimky.")
+    st.markdown("[Finanční správa ČR — daňové novinky pro rok 2026](https://financnisprava.gov.cz/cs/financni-sprava/media-a-verejnost/tiskove-zpravy-gfr/tiskove-zpravy-2026/danove-novinky-pro-rok-2026)")
     template = pd.DataFrame([
         {"Date":"2024-01-15","Ticker":"MSFT","Type":"BUY","Quantity":10,"Price":400,"Fees":1,"Currency":"USD"},
         {"Date":"2025-03-01","Ticker":"MSFT","Type":"SELL","Quantity":4,"Price":420,"Fees":1,"Currency":"USD"},
