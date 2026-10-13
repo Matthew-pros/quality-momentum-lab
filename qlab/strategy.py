@@ -336,6 +336,50 @@ def _build_monthly_cross_section(
     return score_cross_section(pd.DataFrame(rows)) if rows else pd.DataFrame()
 
 
+def _target_weights(
+    selected: list[str],
+    cross_section: pd.DataFrame,
+    method: str = "Equal weight",
+    max_position_weight: float = 0.35,
+) -> dict[str, float]:
+    """Build target weights; inverse ATR weights are capped with any remainder left in cash."""
+    if not selected:
+        return {}
+    if method != "Inverse ATR":
+        return {ticker: 1.0 / len(selected) for ticker in selected}
+
+    table = cross_section.set_index("Ticker")
+    volatility = pd.to_numeric(table.reindex(selected).get("ATR20%", pd.Series(index=selected, dtype=float)), errors="coerce")
+    volatility = volatility.where(volatility > 0)
+    fallback = float(volatility.median()) if volatility.notna().any() else 1.0
+    volatility = volatility.fillna(fallback)
+    scores = (1.0 / volatility).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    if scores.sum() <= 0:
+        return {ticker: 1.0 / len(selected) for ticker in selected}
+
+    cap = float(np.clip(max_position_weight, 1.0 / len(selected), 1.0))
+    remaining = list(selected)
+    target: dict[str, float] = {ticker: 0.0 for ticker in selected}
+    budget = 1.0
+    while remaining and budget > 1e-12:
+        active_scores = scores.reindex(remaining)
+        raw = active_scores / active_scores.sum() if active_scores.sum() > 0 else pd.Series(1.0 / len(remaining), index=remaining)
+        capped = [ticker for ticker in remaining if budget * float(raw[ticker]) > cap + 1e-12]
+        if not capped:
+            for ticker in remaining:
+                target[ticker] = budget * float(raw[ticker])
+            budget = 0.0
+            break
+        for ticker in capped:
+            target[ticker] = cap
+            budget -= cap
+            remaining.remove(ticker)
+        if budget < 0:
+            budget = 0.0
+    # Floating-point roundoff tolerance; unused budget represents cash when all caps bind.
+    return target
+
+
 def run_monthly_backtest(
     prices: dict[str, pd.DataFrame],
     benchmark: pd.Series | None = None,
@@ -350,6 +394,8 @@ def run_monthly_backtest(
     fundamentals_history: dict[str, pd.DataFrame] | None = None,
     optional_history: dict[str, pd.DataFrame] | None = None,
     require_breakout: str = "None",
+    weighting_method: str = "Equal weight",
+    max_position_weight: float = 0.35,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -396,6 +442,9 @@ def run_monthly_backtest(
         score_col = "Fundamental/composite score"
         cross[score_col] = cross[score_col].where(cross[score_col].notna(), cross["Technical score"])
         eligible = cross["Trend OK"].fillna(False).astype(bool) & (cross["ADX14"].fillna(0) >= min_adx)
+        # 50-session low is an explicit month-end exit trigger. This does not
+        # simulate intraday stop fills; those require higher-frequency execution data.
+        eligible &= ~cross["Below 50d low"].fillna(False).astype(bool)
         eligible &= cross[score_col].fillna(-np.inf) >= min_score
         if use_fundamentals:
             # Do not pretend a company with no disclosed data was factor-ranked.
@@ -422,11 +471,13 @@ def run_monthly_backtest(
                 f"Missing monthly return for held ticker(s) {missing} during {row_return_date.date()}; "
                 "the result was stopped rather than silently ignoring a missing/delisted security."
             )
-        new_weights = {ticker: 1 / len(selected) for ticker in selected} if selected else {}
+        new_weights = _target_weights(
+            selected, cross, method=weighting_method, max_position_weight=max_position_weight
+        )
         names = set(previous_weights) | set(new_weights)
         turnover = sum(abs(new_weights.get(t, 0.0) - previous_weights.get(t, 0.0)) for t in names)
         transaction_cost = turnover * float(cost_bps) / 10_000
-        gross_return = float(next_returns.mean()) if selected else 0.0
+        gross_return = float(sum(new_weights.get(ticker, 0.0) * float(next_returns[ticker]) for ticker in selected)) if selected else 0.0
         net_return = gross_return - transaction_cost
         equity *= (1 + net_return)
         rows.append({
@@ -438,6 +489,8 @@ def run_monthly_backtest(
             "Equity": equity,
             "Holdings": ", ".join(selected),
             "Number of holdings": len(selected),
+            "Gross exposure %": sum(new_weights.values()) * 100,
+            "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
             "Gross turnover": turnover,
             "Estimated cost (bps of portfolio)": transaction_cost * 10_000,
             "Selected score mean": float(scores.reindex(selected).mean()) if selected else np.nan,
@@ -447,6 +500,8 @@ def run_monthly_backtest(
             "Return period": row_return_date,
             "Previous holdings": ", ".join(sorted(previous_holdings)),
             "Selected holdings": ", ".join(selected),
+            "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
+            "Weighting method": weighting_method,
             "Eligible names": ", ".join(sorted(eligible[eligible].index)),
             "Min ADX": min_adx,
             "Min score": min_score,
@@ -476,6 +531,7 @@ def run_monthly_backtest(
         "Months": number_of_months,
         "Total transaction costs %": float(curve["Transaction cost"].sum() * 100),
         "Average monthly turnover %": float(curve["Gross turnover"].mean() * 100),
+        "Average gross exposure %": float(curve["Gross exposure %"].mean()),
     }
     if benchmark is not None and not benchmark.empty:
         bench = benchmark.dropna().resample("ME").last().pct_change(fill_method=None)
