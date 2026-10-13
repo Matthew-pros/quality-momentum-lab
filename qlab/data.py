@@ -189,6 +189,17 @@ def assess_price_quality(
         ]
         clean.loc[invalid, price_columns] = np.nan
         sanitized[ticker] = clean
+        valid_close = pd.to_numeric(clean["Close"], errors="coerce")
+        if not valid_close.notna().any():
+            quality_row.update({
+                "Calendar days stale": max(0, int((now_ts - pd.Timestamp(clean.index.max()).normalize()).days)),
+                "Invalid price rows": invalid_count,
+                "Max abs daily return %": np.nan,
+                "Quality": "MISSING",
+                "Quality message": "No valid Close rows remain after invalid OHLC filtering",
+            })
+            quality_rows.append(quality_row)
+            continue
 
         ret_col = "Adj Close" if "Adj Close" in clean else "Close"
         ret = pd.to_numeric(clean[ret_col], errors="coerce").pct_change(fill_method=None)
@@ -234,8 +245,18 @@ def assess_price_quality(
         mask = report["Ticker"].astype(str).eq(ticker)
         if mask.any():
             valid_close = pd.to_numeric(clean["Close"], errors="coerce")
-            report.loc[mask, "Rows"] = int(valid_close.notna().sum())
-            report.loc[mask, "Missing %"] = round(float(valid_close.isna().mean() * 100), 2)
+            valid_dates = clean.index[valid_close.notna()]
+            valid_count = int(valid_close.notna().sum())
+            report.loc[mask, "Rows"] = valid_count
+            report.loc[mask, "Missing %"] = round(float(100 * (1 - valid_count / len(clean))) if len(clean) else 100.0, 2)
+            if valid_count:
+                report.loc[mask, "First date"] = pd.Timestamp(valid_dates.min()).date().isoformat()
+                report.loc[mask, "Last date"] = pd.Timestamp(valid_dates.max()).date().isoformat()
+            else:
+                report.loc[mask, "Status"] = "MISSING"
+                report.loc[mask, "First date"] = ""
+                report.loc[mask, "Last date"] = ""
+                report.loc[mask, "Missing %"] = 100.0
     # Preserve price series that were absent from the quality report (e.g. extra CSV tickers).
     report_tickers = set(report["Ticker"].astype(str))
     for ticker, frame in prices.items():
