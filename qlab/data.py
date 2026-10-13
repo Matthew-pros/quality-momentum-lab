@@ -6,6 +6,7 @@ SEC Company Facts supplies standardized reported facts for mapped SEC filers.
 from __future__ import annotations
 
 from datetime import date
+import hashlib
 import time
 from typing import Any
 
@@ -189,6 +190,70 @@ def assess_price_quality(
         if ticker not in sanitized and ticker not in report_tickers:
             sanitized[ticker] = frame.copy()
     return sanitized, report
+
+def generate_demo_market_data(
+    tickers: str | list[str],
+    period: str = "10y",
+    now=None,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Generate deterministic synthetic OHLCV data for public UI demonstrations.
+
+    This function never reaches an external service and the outputs are not real
+    security prices or signals about real companies. A ticker string only seeds its
+    synthetic path; it does not map that path to a real security.
+    """
+    symbols = normalize_tickers(tickers)
+    report_columns = [
+        "Ticker", "Status", "Rows", "First date", "Last date", "Missing %",
+        "Message", "Source",
+    ]
+    if not symbols:
+        return {}, pd.DataFrame(columns=report_columns)
+    days_by_period = {"5y": 1260, "10y": 2520, "max": 3780}
+    observations = days_by_period.get(str(period).lower(), 2520)
+    end = pd.Timestamp(now if now is not None else pd.Timestamp.now()).normalize()
+    dates = pd.bdate_range(end=end, periods=observations)
+    prices: dict[str, pd.DataFrame] = {}
+    report_rows = []
+    for position, ticker in enumerate(symbols):
+        seed_bytes = hashlib.sha256(ticker.encode("utf-8")).digest()[:8]
+        seed = int.from_bytes(seed_bytes, "little", signed=False)
+        rng = np.random.default_rng(seed)
+        annual_drift = 0.00010 + (seed % 31) / 100_000
+        daily_vol = 0.008 + ((seed >> 8) % 8) / 1000
+        log_returns = rng.normal(annual_drift, daily_vol, size=len(dates))
+        base = 25.0 + (position % 12) * 11.0
+        close = base * np.exp(np.cumsum(log_returns))
+        open_price = close * np.exp(rng.normal(0.0, daily_vol * 0.35, size=len(dates)))
+        high = np.maximum(open_price, close) * (1.0 + rng.uniform(0.001, 0.012, size=len(dates)))
+        low = np.minimum(open_price, close) * (1.0 - rng.uniform(0.001, 0.012, size=len(dates))
+        )
+        volume = rng.integers(250_000, 15_000_000, size=len(dates), endpoint=False)
+        frame = pd.DataFrame({
+            "Open": open_price,
+            "High": high,
+            "Low": low,
+            "Close": close,
+            "Adj Close": close,
+            "Volume": volume,
+        }, index=dates)
+        prices[ticker] = frame
+        report_rows.append({
+            "Ticker": ticker, "Status": "OK", "Rows": len(frame),
+            "First date": dates.min().date().isoformat(),
+            "Last date": dates.max().date().isoformat(),
+            "Missing %": 0.0,
+            "Message": "SYNTHETIC DEMO ONLY — not real market data",
+            "Source": "Synthetic demo",
+        })
+    report = pd.DataFrame(report_rows, columns=report_columns)
+    prices, report = assess_price_quality(prices, report, now=end)
+    report["Source"] = "Synthetic demo"
+    report["Message"] = report["Message"].fillna("").astype(str).apply(
+        lambda message: "; ".join(part for part in [message, "SYNTHETIC DEMO ONLY — not real market data"] if part)
+    )
+    return prices, report
+
 
 def download_market_data(
     tickers: str | list[str],
