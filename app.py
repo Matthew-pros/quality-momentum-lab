@@ -726,10 +726,22 @@ with tab_portfolio:
         try:
             transactions = pd.read_csv(io.BytesIO(ledger_upload.getvalue()))
             realized,open_lots,annual = fifo_ledger(transactions)
+            realized_currencies = sorted(realized["Currency"].fillna("").astype(str).str.upper().unique()) if not realized.empty else []
+            if len(realized_currencies) == 1:
+                realized_gain_label = f"Realizovaný zisk / ztráta ({realized_currencies[0]})"
+                realized_gain_value = f"{realized['Realized gain/loss'].sum():,.2f}"
+            elif len(realized_currencies) > 1:
+                realized_gain_label = "Realizovaný zisk / ztráta"
+                realized_gain_value = "Více měn — viz tabulka"
+            else:
+                realized_gain_label = "Realizovaný zisk / ztráta"
+                realized_gain_value = "0.00"
             a,b,c = st.columns(3)
-            a.metric("Realizovaný zisk / ztráta",f"{realized['Realized gain/loss'].sum():,.2f}" if not realized.empty else "0.00")
+            a.metric(realized_gain_label, realized_gain_value)
             b.metric("Realizované páry",str(len(realized)))
             c.metric("Otevřené loty",str(len(open_lots)))
+            if len(realized_currencies) > 1:
+                st.caption("P/L se nesčítá napříč různými měnami bez konverze do společné měny.")
             if not realized.empty:
                 st.markdown("**Realizované páry (FIFO)**")
                 st.dataframe(realized,width="stretch",hide_index=True)
