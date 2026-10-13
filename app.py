@@ -343,8 +343,8 @@ with tab_screener:
         "Quality score": st.column_config.NumberColumn(format="%.1f"), "Value score": st.column_config.NumberColumn(format="%.1f"),
         "Growth score": st.column_config.NumberColumn(format="%.1f"), "Momentum score": st.column_config.NumberColumn(format="%.1f"),
         "Fundamental coverage %": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%"),
-        "Price": st.column_config.NumberColumn(format="%.2f"), "Momentum 12-1M": st.column_config.NumberColumn(format="%.1%"),
-        "Momentum 6-1M": st.column_config.NumberColumn(format="%.1%"), "ATR20%": st.column_config.NumberColumn(format="%.2f%"),
+        "Price": st.column_config.NumberColumn(format="%.2f"), "Momentum 12-1M": st.column_config.NumberColumn(format="percent"),
+        "Momentum 6-1M": st.column_config.NumberColumn(format="percent"), "ATR20%": st.column_config.NumberColumn(format="%.2f%"),
         "ADX14": st.column_config.NumberColumn(format="%.1f"),
     })
     st.download_button("Stáhnout kompletní screener CSV", shown.to_csv(index=False).encode("utf-8"), "quality_momentum_screener.csv", "text/csv")
@@ -451,10 +451,10 @@ with tab_strategy:
         st.caption("Stejná historická rozhodnutí a váhy, pouze přepočet cost bps. Nejde o nové přepočítání rozhodovací logiky; nezahrnuje změnu obchodů způsobenou vyššími náklady.")
         st.dataframe(sensitivity, width="stretch", hide_index=True, column_config={
             "Cost (bps)": st.column_config.NumberColumn(format="%.0f"),
-            "CAGR": st.column_config.NumberColumn(format="%.2%"),
-            "Volatility": st.column_config.NumberColumn(format="%.2%"),
+            "CAGR": st.column_config.NumberColumn(format="percent"),
+            "Volatility": st.column_config.NumberColumn(format="percent"),
             "Sharpe (rf=0)": st.column_config.NumberColumn(format="%.2f"),
-            "Max drawdown": st.column_config.NumberColumn(format="%.2%"),
+            "Max drawdown": st.column_config.NumberColumn(format="percent"),
             "Final equity": st.column_config.NumberColumn(format="$%.2f"),
         })
         sensitivity_fig = px.line(sensitivity, x="Cost (bps)", y="CAGR", markers=True,
