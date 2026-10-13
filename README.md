@@ -1,10 +1,11 @@
-# Quality Momentum Lab — research app v2.3.0
+# Quality Momentum Lab — research app v2.4.0
 
 A Streamlit research environment for screening equities, reviewing price and fundamental data, testing monthly momentum rules, sizing positions with ATR, and reconciling FIFO tax lots.
 
 ## What the app implements
 
 - **Public-safe price mode:** the default public app uses deterministic synthetic DEMO prices, never calls a market-data API at startup, labels every synthetic series, and skips real-company SEC fundamentals. For actual securities, switch to **Import OHLCV CSV** and upload a data set you have permission to use and publicly display. The Yahoo adapter is optional/non-public and is not part of the default public runtime.
+- **Point-in-time universe membership:** optional interval CSV (`Ticker,Start date,End date`) restricts each historical cross-section before factor percentile ranks are calculated. The current screener is filtered to members as of the latest available price date. The app fails fast if a member in the history has no OHLCV series at all and exports the membership provenance. This reduces survivorship bias only if the uploaded intervals and delisted-price history are complete.
 - **Price quality/provenance:** per-ticker flags for stale series, invalid prices and extreme daily moves; invalid OHLC rows are excluded from technical calculations while large moves remain flagged for manual review. CSV exports retain source mode, uploaded filename and whether adjusted close was provided or dividends may be omitted.
 - **Technical factors:** momentum 12–1M and 6–1M, MA50/MA200 trend, MA200 slope, ADX(14), ATR(20), 20-/55-session breakout and 50-session low trigger. Indicators and daily stop logic use adjusted OHLC where available to avoid split-driven false jumps; latest ATR is converted to the quoted-price scale for share sizing.
 - **Official filing fundamentals:** SEC EDGAR Company Facts for supported filers, with every fact filtered by its filing date for as-of snapshots; separate SEC submissions metadata supplies SIC codes/descriptions and a coarse SIC major-industry group. It is not a GICS/ICB sector feed. Enter a contact email in the sidebar or set the Streamlit secret `SEC_CONTACT_EMAIL`.
@@ -27,7 +28,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 1. **Public-data rights:** the deployed/public UI does not fetch or redistribute Yahoo prices. Its default is clearly labeled synthetic data; real prices are user-supplied through CSV. The optional Yahoo adapter is intended only for explicitly configured, non-public experimentation and requires checking the provider's terms and data rights. SEC facts are disabled in synthetic-demo mode.
 2. **SEC coverage:** SEC Company Facts only covers mapped SEC filers and available XBRL tags. Accounting definitions and fiscal periods differ; reported values need data-quality and issuer-by-issuer review.
 3. **Valuation estimates:** P/E and FCF yield based on current price × the latest reported shares outstanding can be materially wrong for ADRs, dual-class companies or stale share counts. These estimates are excluded from scoring by default.
-4. **Backtest universe:** the entered symbol list is a current user-selected universe, not a point-in-time, survivorship-bias-free database. The engine stops instead of silently dropping held securities with missing future returns.
+4. **Backtest universe:** static-list mode uses a user-selected ticker list and has survivorship bias. Optional interval membership improves point-in-time inclusion only if it completely covers every historical constituent and the OHLCV upload includes their price histories, including delisted stocks. This is not a packaged survivorship-bias-free security master. The engine stops instead of silently dropping held securities with missing future returns.
 5. **Execution realism:** the monthly prototype applies turnover costs to close-to-close returns; it does not model exact opening fills, bid/ask spreads, market impact, every corporate action or FX conversion.
 6. **Tax:** the FIFO tool is a lot ledger with year-specific preliminary flags. It marks the CZK 100k annual value-test case, the CZK 40m time-test cap applicable to tax year 2025 only, and that cap's removal for securities from 2026. It never applies the 2025 cap retroactively to 2024 or earlier. From 14 February 2025, exempt cryptoasset sales could also count toward the 2025 cap; cryptoassets are not included in this app's lot ledger. The potential CZK 5m §38v notification check is evaluated against each source sale row, even if FIFO divides it among acquisition lots; that row-to-receipt match is a review approximation, not a legal conclusion. It is not a Czech tax calculation and does not apply all exemptions, tax rates, loss offsets, inheritance/corporate-action rules, all other exempt receipts, or FX conversion.
 7. **HMM and external sentiment:** HMM remains deferred until simpler features pass out-of-sample tests. External sentiment/revision signals are accepted only with timestamps and source metadata.
@@ -75,6 +76,21 @@ Date,Ticker,Open,High,Low,Close,Adj Close,Volume
 ```
 
 Required columns are `Date,Ticker,Open,High,Low,Close`; `Adj Close` and `Volume` are optional. If `Adj Close` is omitted, momentum falls back to `Close` and dividend adjustment is not included. Duplicate ticker/date rows are rejected. Edit the investment universe to match the tickers contained in the file, and include the `SPY` rows if you want the SPY benchmark. Use only data you have permission to use and redistribute.
+
+## Historical investment-universe membership CSV
+
+When you have a reliable historical membership source, upload it in the sidebar under **Historické složení investičního univerza**. The file becomes the authoritative ticker list in research mode and uses inclusive start/end dates:
+
+```csv
+Ticker,Start date,End date
+AAA,2015-01-01,2020-12-31
+AAA,2021-01-01,
+BBB,2018-06-01,
+```
+
+A blank `End date` is an open-ended membership. One ticker may have several intervals only when they do not overlap. `End date` cannot be earlier than `Start date`. The app filters membership as of each month-end decision **before** cross-sectional scores/ranks are computed, so future constituents do not influence earlier percentiles.
+
+**Data requirement:** the separate OHLCV CSV must contain a price history for every ticker mentioned in the membership file, even a ticker that later delisted. Newer listings may have short histories and only become eligible after sufficient price-history burn-in. If a membership ticker is absent from the OHLCV input entirely, the backtest stops with an error. A membership file does not magically recover missing delisted prices or prove that the historical constituent list is complete.
 
 ## Optional-signal CSV schemas
 
