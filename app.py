@@ -337,7 +337,11 @@ if is_demo_mode:
         frame.attrs["currency"] = "USD"
     if "Currency" not in price_report:
         price_report["Currency"] = "USD"
-prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
+prices = {
+    ticker: frame for ticker, frame in price_data_all.items()
+    if ticker in set(universe) and frame is not None and not frame.empty
+    and "Close" in frame and pd.to_numeric(frame["Close"], errors="coerce").notna().any()
+}
 missing_investable_tickers = sorted(set(universe) - set(prices))
 if not prices:
     st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
@@ -485,7 +489,15 @@ if universe_history is not None:
 st.markdown(f'<div class="qlab-eyebrow">Systematic equity research · build {APP_VERSION}</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-title">Quality × Value × Momentum</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-subtitle">Výzkumné prostředí pro výběr akcií, dlouhodobé momentum, fundamentální kvalitu a řízení obratu portfolia. Důraz je na dohledatelných zdrojích, časové správnosti a výsledcích po nákladech — nikoli na falešné přesnosti.</div>', unsafe_allow_html=True)
-latest_price_date = max(frame.index.max() for frame in prices.values())
+usable_last_dates = [
+    pd.Timestamp(frame["Close"].last_valid_index())
+    for frame in prices.values()
+    if not frame.empty and "Close" in frame and frame["Close"].last_valid_index() is not None
+]
+if not usable_last_dates:
+    st.error("Po vyřazení neplatných cen nezůstala žádná použitelná řada.")
+    st.stop()
+latest_price_date = max(usable_last_dates)
 stamp = pd.Timestamp(latest_price_date)
 age_days = (pd.Timestamp.now().normalize() - stamp.tz_localize(None).normalize()).days if stamp.tzinfo else (pd.Timestamp.now().normalize() - stamp.normalize()).days
 screener_tickers = set(screener["Ticker"].astype(str))
