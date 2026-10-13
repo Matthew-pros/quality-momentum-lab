@@ -984,10 +984,24 @@ def calculate_position_sizes(
     stop_atr_multiple: float = 3.0,
     max_position_pct: float = 20.0,
     max_total_exposure_pct: float = 95.0,
+    max_total_risk_pct: float = 3.0,
 ) -> pd.DataFrame:
     """ATR-based long-only sizing planner, not an order-execution system."""
     if screener.empty or not selected_tickers:
         return pd.DataFrame()
+    if not np.isfinite(float(capital)) or capital <= 0:
+        raise ValueError("Capital must be a positive finite value.")
+    for name, value in [
+        ("risk_budget_pct", risk_budget_pct),
+        ("stop_atr_multiple", stop_atr_multiple),
+        ("max_position_pct", max_position_pct),
+        ("max_total_exposure_pct", max_total_exposure_pct),
+        ("max_total_risk_pct", max_total_risk_pct),
+    ]:
+        if not np.isfinite(float(value)) or float(value) < 0:
+            raise ValueError(f"{name} must be finite and non-negative.")
+    if stop_atr_multiple <= 0:
+        raise ValueError("stop_atr_multiple must be positive.")
     indexed = screener.set_index("Ticker")
     rows = []
     for ticker in selected_tickers:
@@ -1028,4 +1042,20 @@ def calculate_position_sizes(
         result["Initial risk budget"] = result["Shares (risk-sized, capped)"] * result["Stop distance"]
         result["Risk if stop fills at stop price"] = result["Initial risk budget"]
         result["Weight %"] = result["Position value"] / float(capital) * 100
+
+    # Apply a portfolio-level open-position risk cap after per-position and gross
+    # exposure limits. Integer share rounding keeps realized model risk at or below cap.
+    total_risk_cap = float(capital) * float(max_total_risk_pct) / 100
+    total_risk = float(result["Initial risk budget"].sum())
+    if total_risk > total_risk_cap and total_risk > 0:
+        scale = total_risk_cap / total_risk
+        result["Shares (risk-sized, capped)"] = np.floor(result["Shares (risk-sized, capped)"] * scale).astype(int)
+        result["Position value"] = result["Shares (risk-sized, capped)"] * result["Price"]
+        result["Initial risk budget"] = result["Shares (risk-sized, capped)"] * result["Stop distance"]
+        result["Risk if stop fills at stop price"] = result["Initial risk budget"]
+        result["Weight %"] = result["Position value"] / float(capital) * 100
+
+    result["Portfolio risk cap %"] = float(max_total_risk_pct)
+    result["Portfolio risk used %"] = result["Initial risk budget"] / float(capital) * 100
+    result["Total portfolio risk %"] = float(result["Initial risk budget"].sum() / float(capital) * 100)
     return result
