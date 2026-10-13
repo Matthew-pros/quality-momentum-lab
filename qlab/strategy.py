@@ -499,6 +499,17 @@ def run_monthly_backtest(
     returns for the next month, with costs on gross traded notional. This is not an
     intraday fill simulation; the current symbol list can still create survivorship bias.
     """
+    valid_stop_modes = {
+        "No stop / month-end rebalancing",
+        "Month-end 50-day low",
+        "ATR trailing stop",
+        "Daily 50-day low",
+        "ATR + daily 50-day low",
+    }
+    if stop_mode not in valid_stop_modes:
+        raise ValueError(f"Unsupported stop_mode: {stop_mode}")
+    if stop_atr_multiple <= 0:
+        raise ValueError("stop_atr_multiple must be positive.")
     if not prices:
         return None, None, None
     adjusted = {}
@@ -537,9 +548,10 @@ def run_monthly_backtest(
         score_col = "Fundamental/composite score"
         cross[score_col] = cross[score_col].where(cross[score_col].notna(), cross["Technical score"])
         eligible = cross["Trend OK"].fillna(False).astype(bool) & (cross["ADX14"].fillna(0) >= min_adx)
-        # 50-session low is an explicit month-end exit trigger. This does not
-        # simulate intraday stop fills; those require higher-frequency execution data.
-        eligible &= ~cross["Below 50d low"].fillna(False).astype(bool)
+        # Month-end and daily 50-day-low modes both avoid carrying a name into a
+        # new month if its close has already breached the prior 50-session low.
+        if stop_mode in {"Month-end 50-day low", "Daily 50-day low", "ATR + daily 50-day low"}:
+            eligible &= ~cross["Below 50d low"].fillna(False).astype(bool)
         eligible &= cross[score_col].fillna(-np.inf) >= min_score
         if use_fundamentals:
             # Do not pretend a company with no disclosed data was factor-ranked.
@@ -557,24 +569,63 @@ def run_monthly_backtest(
         )
         row_return_date = monthly.index[i + 1]
         selected = sorted(picks)
-        # A missing return for a portfolio constituent invalidates the backtest result;
-        # never silently drop that name and inflate results.
         next_returns = monthly_returns.loc[row_return_date, selected] if selected else pd.Series(dtype=float)
-        if len(selected) and next_returns.isna().any():
-            missing = list(next_returns.index[next_returns.isna()])
-            raise ValueError(
-                f"Missing monthly return for held ticker(s) {missing} during {row_return_date.date()}; "
-                "the result was stopped rather than silently ignoring a missing/delisted security."
-            )
         new_weights = _target_weights(
             selected, cross, method=weighting_method, max_position_weight=max_position_weight
         )
         names = set(previous_weights) | set(new_weights)
         turnover = sum(abs(new_weights.get(t, 0.0) - previous_weights.get(t, 0.0)) for t in names)
         transaction_cost = turnover * float(cost_bps) / 10_000
-        gross_return = float(sum(new_weights.get(ticker, 0.0) * float(next_returns[ticker]) for ticker in selected)) if selected else 0.0
+
+        # Run the chosen daily-bar stop variant. Month-end-only models continue to
+        # use adjusted close-to-close returns; stop variants can exit earlier in-month.
+        ticker_returns: dict[str, float] = {}
+        ticker_exit_reason: dict[str, str] = {}
+        ticker_exit_date: dict[str, str] = {}
+        daily_stop_modes = {"ATR trailing stop", "Daily 50-day low", "ATR + daily 50-day low"}
+        for ticker in selected:
+            if stop_mode in daily_stop_modes:
+                ret, reason, exit_date = _simulate_position_month(
+                    prices[ticker], indicator_cache.get(ticker), decision_date, row_return_date,
+                    stop_mode=stop_mode, stop_atr_multiple=stop_atr_multiple,
+                )
+                if reason == "MISSING" or not np.isfinite(ret):
+                    raise ValueError(
+                        f"Missing daily price path for {ticker} from {decision_date.date()} "
+                        f"through {row_return_date.date()}; daily-stop result halted."
+                    )
+                if reason == "HOLD" and pd.isna(next_returns.get(ticker, np.nan)):
+                    raise ValueError(
+                        f"No verified month-end return for {ticker} during {row_return_date.date()} "
+                        "and no stop exit was recorded; result halted instead of forward-filling."
+                    )
+                ticker_returns[ticker] = float(ret)
+                ticker_exit_reason[ticker] = reason
+                ticker_exit_date[ticker] = exit_date
+            else:
+                ret = next_returns.get(ticker, np.nan)
+                if pd.isna(ret):
+                    raise ValueError(
+                        f"Missing monthly return for held ticker {ticker} during {row_return_date.date()}; "
+                        "the result was stopped rather than silently ignoring a missing/delisted security."
+                    )
+                ticker_returns[ticker] = float(ret)
+                ticker_exit_reason[ticker] = "HOLD"
+                ticker_exit_date[ticker] = ""
+
+        gross_return = float(sum(new_weights.get(ticker, 0.0) * ticker_returns[ticker] for ticker in selected)) if selected else 0.0
         net_return = gross_return - transaction_cost
         equity *= (1 + net_return)
+
+        stopped = {ticker for ticker in selected if ticker_exit_reason[ticker] != "HOLD"}
+        survivors = [ticker for ticker in selected if ticker not in stopped]
+        drifted_weights: dict[str, float] = {}
+        if 1 + net_return > 0:
+            for ticker in survivors:
+                drifted_weights[ticker] = (
+                    new_weights.get(ticker, 0.0) * (1 + ticker_returns[ticker]) / (1 + net_return)
+                )
+        effective_exposure = sum(drifted_weights.values()) * 100
         rows.append({
             "Date": row_return_date,
             "Signal date": decision_date,
@@ -584,8 +635,12 @@ def run_monthly_backtest(
             "Equity": equity,
             "Holdings": ", ".join(selected),
             "Number of holdings": len(selected),
-            "Gross exposure %": sum(new_weights.values()) * 100,
+            "Stops triggered": len(stopped),
+            "Stop exits": ", ".join(f"{ticker}:{ticker_exit_reason[ticker]}" for ticker in sorted(stopped)),
+            "Stop dates": ", ".join(f"{ticker}:{ticker_exit_date[ticker]}" for ticker in sorted(stopped) if ticker_exit_date[ticker]),
+            "Gross exposure %": effective_exposure,
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
+            "Surviving weights": ", ".join(f"{ticker}:{drifted_weights[ticker]:.3f}" for ticker in sorted(drifted_weights)),
             "Gross turnover": turnover,
             "Estimated cost (bps of portfolio)": transaction_cost * 10_000,
             "Selected score mean": float(scores.reindex(selected).mean()) if selected else np.nan,
@@ -596,6 +651,11 @@ def run_monthly_backtest(
             "Previous holdings": ", ".join(sorted(previous_holdings)),
             "Selected holdings": ", ".join(selected),
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
+            "Ticker returns": ", ".join(f"{ticker}:{ticker_returns[ticker]:.4f}" for ticker in selected),
+            "Exit rules": ", ".join(f"{ticker}:{ticker_exit_reason[ticker]}" for ticker in selected),
+            "Stop dates": ", ".join(f"{ticker}:{ticker_exit_date[ticker]}" for ticker in selected if ticker_exit_date[ticker]),
+            "Stops triggered": len(stopped),
+            "Stop mode": stop_mode,
             "Weighting method": weighting_method,
             "Eligible names": ", ".join(sorted(eligible[eligible].index)),
             "Min ADX": min_adx,
@@ -604,8 +664,8 @@ def run_monthly_backtest(
             "Gross turnover": turnover,
             "Cost bps": cost_bps,
         })
-        previous_holdings = picks
-        previous_weights = new_weights
+        previous_holdings = set(survivors)
+        previous_weights = drifted_weights
     if not rows:
         return None, None, None
     curve = pd.DataFrame(rows).set_index("Date")
