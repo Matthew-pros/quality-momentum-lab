@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 
@@ -445,6 +445,22 @@ with tab_strategy:
         st.dataframe(curve, width="stretch")
         st.download_button("Stáhnout equity curve CSV",curve.to_csv().encode("utf-8"),"backtest_curve.csv","text/csv")
         st.download_button("Stáhnout audit obchodních rozhodnutí CSV",audit.to_csv(index=False).encode("utf-8"),"backtest_audit.csv","text/csv")
+        st.markdown("#### Citlivost na transakční náklady")
+        sensitivity_bps = tuple(sorted(set([0.0, float(cost_bps), 15.0, 30.0, 50.0])))
+        sensitivity = cost_sensitivity(curve, initial=capital, cost_scenarios_bps=sensitivity_bps)
+        st.caption("Stejná historická rozhodnutí a váhy, pouze přepočet cost bps. Nejde o nové přepočítání rozhodovací logiky; nezahrnuje změnu obchodů způsobenou vyššími náklady.")
+        st.dataframe(sensitivity, width="stretch", hide_index=True, column_config={
+            "Cost (bps)": st.column_config.NumberColumn(format="%.0f"),
+            "CAGR": st.column_config.NumberColumn(format="%.2f%%"),
+            "Volatility": st.column_config.NumberColumn(format="%.2f%%"),
+            "Sharpe (rf=0)": st.column_config.NumberColumn(format="%.2f"),
+            "Max drawdown": st.column_config.NumberColumn(format="%.2f%%"),
+            "Final equity": st.column_config.NumberColumn(format="$%.2f"),
+        })
+        sensitivity_fig = px.line(sensitivity, x="Cost (bps)", y="CAGR", markers=True,
+            title="CAGR při různých nákladech", template="plotly_dark")
+        sensitivity_fig.update_layout(height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(sensitivity_fig, width="stretch")
         st.warning("Tento test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Close-to-close model nákladů nenahrazuje plnou exekuci na open/spread/slippage a daňový model.")
 
 with tab_portfolio:
