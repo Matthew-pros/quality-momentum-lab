@@ -333,8 +333,8 @@ if is_demo_mode:
         frame.attrs["currency"] = "USD"
     if "Currency" not in price_report:
         price_report["Currency"] = "USD"
-missing_investable_tickers = sorted(set(universe) - set(price_data_all))
 prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
+missing_investable_tickers = sorted(set(universe) - set(prices))
 if not prices:
     st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
     st.stop()
