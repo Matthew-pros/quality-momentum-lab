@@ -40,6 +40,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## Streamlit Community Cloud deployment
+
+Streamlit Community Cloud does not use `runtime.txt` to select the Python version. In the app's advanced settings, select Python 3.12 (or another explicitly tested version), then save/redeploy as needed. Official instructions: https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy
+
+Set secrets in the Streamlit app's settings under **Advanced settings → Secrets**, for example:
+
+```toml
+SEC_CONTACT_EMAIL = "your-contact-email@example.com"
+```
+
+Do not commit real contact details or API keys to a public repository.
+
 ## SEC contact email
 
 The contact email is sent in the SEC request's User-Agent header. To set it on Streamlit Community Cloud, add a secret named `SEC_CONTACT_EMAIL`, or enter the address in the running app. Use an address you are comfortable sharing with the SEC request endpoint. SEC EDGAR public data APIs are described here: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
