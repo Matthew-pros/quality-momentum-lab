@@ -888,21 +888,41 @@ def _all_filing_dates(company_facts: dict[str, Any]) -> list[date]:
     return sorted(found)
 
 
-def _reprice_snapshot(snapshot: dict[str, Any], as_of: date, latest_price: float) -> dict[str, Any]:
-    """Update only price-dependent valuation fields while financial disclosures are unchanged."""
+def _reprice_snapshot(
+    snapshot: dict[str, Any],
+    as_of: date,
+    latest_price: float,
+    price_currency: str | None = None,
+) -> dict[str, Any]:
+    """Update quote-dependent valuation only if its currency matches the reported XBRL unit."""
     row = dict(snapshot)
     row["As of"] = as_of.isoformat()
     shares = pd.to_numeric(pd.Series([row.get("Shares outstanding (reported)", np.nan)]), errors="coerce").iloc[0]
     income = pd.to_numeric(pd.Series([row.get("Net income", np.nan)]), errors="coerce").iloc[0]
     fcf = pd.to_numeric(pd.Series([row.get("FCF", np.nan)]), errors="coerce").iloc[0]
+    price_currency_code = str(price_currency or row.get("Price currency", "")).strip().upper()
+    income_unit = str(row.get("Net income unit", "") or "")
+    fcf_unit = str(row.get("FCF unit", "") or "")
+    matches_income = bool(price_currency_code and income_unit and price_currency_code == income_unit)
+    matches_fcf = bool(price_currency_code and fcf_unit and price_currency_code == fcf_unit)
     market_cap = (
         float(latest_price) * float(shares)
-        if pd.notna(latest_price) and latest_price > 0 and pd.notna(shares) and shares > 0
+        if matches_income and pd.notna(latest_price) and latest_price > 0 and pd.notna(shares) and shares > 0
         else np.nan
     )
+    row["Price currency"] = price_currency_code or "UNKNOWN"
+    row["Price / net-income unit match"] = matches_income
     row["Estimated market cap"] = market_cap
-    row["P/E (annual EPS proxy)"] = market_cap / income if pd.notna(market_cap) and pd.notna(income) and income > 0 else np.nan
-    row["FCF yield %"] = fcf / market_cap * 100 if pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0 else np.nan
+    row["P/E (annual EPS proxy)"] = (
+        market_cap / income
+        if matches_income and pd.notna(market_cap) and pd.notna(income) and income > 0
+        else np.nan
+    )
+    row["FCF yield %"] = (
+        fcf / market_cap * 100
+        if matches_fcf and pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0
+        else np.nan
+    )
     return row
 
 
@@ -910,17 +930,22 @@ def sec_snapshot_to_history(
     fact_bundle: dict[str, Any],
     dates: list[pd.Timestamp],
     prices: pd.Series | None = None,
+    price_currency: str | None = None,
 ) -> pd.DataFrame:
     """Build filing-date-safe monthly snapshots, recalculating fundamentals on new filing events only.
 
     This avoids repeatedly scanning a full SEC XBRL payload for every month in a multi-year test.
     A filing dated on the decision day is withheld until a later decision date to avoid close-time leakage.
+    Price-dependent multiples are only produced where the price currency matches the corresponding XBRL unit.
     """
     requested = pd.DatetimeIndex(pd.to_datetime(dates), name="Decision date")
     if requested.empty:
         return pd.DataFrame(index=requested)
     ordered = requested.sort_values().unique()
     filing_dates = _all_filing_dates(fact_bundle["payload"])
+    if not price_currency and prices is not None:
+        price_currency = prices.attrs.get("currency")
+    price_currency = str(price_currency or "").strip().upper() or None
     price_series = None
     if prices is not None:
         price_series = pd.to_numeric(prices, errors="coerce").copy()
@@ -943,9 +968,13 @@ def sec_snapshot_to_history(
             prior_calculated_date < filed < cutoff for filed in filing_dates
         )
         if last_snapshot is None or has_new_filing:
-            last_snapshot = sec_fundamental_snapshot(fact_bundle, cutoff, latest_price)
+            last_snapshot = sec_fundamental_snapshot(
+                fact_bundle, cutoff, latest_price, price_currency=price_currency
+            )
         else:
-            last_snapshot = _reprice_snapshot(last_snapshot, cutoff, latest_price)
+            last_snapshot = _reprice_snapshot(
+                last_snapshot, cutoff, latest_price, price_currency=price_currency
+            )
         rows_by_date[pd.Timestamp(ts)] = dict(last_snapshot)
         prior_calculated_date = cutoff
 
