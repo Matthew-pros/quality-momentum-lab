@@ -451,10 +451,10 @@ with tab_strategy:
         st.caption("Stejná historická rozhodnutí a váhy, pouze přepočet cost bps. Nejde o nové přepočítání rozhodovací logiky; nezahrnuje změnu obchodů způsobenou vyššími náklady.")
         st.dataframe(sensitivity, width="stretch", hide_index=True, column_config={
             "Cost (bps)": st.column_config.NumberColumn(format="%.0f"),
-            "CAGR": st.column_config.NumberColumn(format="%.2f%%"),
-            "Volatility": st.column_config.NumberColumn(format="%.2f%%"),
+            "CAGR": st.column_config.NumberColumn(format="%.2%"),
+            "Volatility": st.column_config.NumberColumn(format="%.2%"),
             "Sharpe (rf=0)": st.column_config.NumberColumn(format="%.2f"),
-            "Max drawdown": st.column_config.NumberColumn(format="%.2f%%"),
+            "Max drawdown": st.column_config.NumberColumn(format="%.2%"),
             "Final equity": st.column_config.NumberColumn(format="$%.2f"),
         })
         sensitivity_fig = px.line(sensitivity, x="Cost (bps)", y="CAGR", markers=True,
@@ -486,7 +486,7 @@ with tab_portfolio:
     st.divider()
     st.markdown("#### FIFO tax-lot ledger")
     st.write("Nahraj historii transakcí. FIFO páruje prodeje s nejstaršími nákupními loty, započítá dodané poplatky a ukáže realizovaný zisk/ztrátu, hrubé prodeje i zbylé loty.")
-    st.info("Daňové štítky jsou pouze orientační: pro prodeje v CZK označí roční hodnotový test do 100 000 Kč nebo splnění tříletého časového testu. U jiných měn nepočítají automaticky konverzi do CZK. Aplikace neurčuje výslednou daň, daňovou sazbu ani přiznání; je nutné prověřit úplnost portfolia a zákonné výjimky.")
+    st.info("Daňové štítky jsou pouze orientační. Pro rok 2026 označí potenciální roční hodnotový test do 100 000 Kč nebo splnění tříletého časového testu; 40milionový limit pro osvobození cenných papírů od roku 2026 zrušen. U osvobozených příjmů nad 5 mil. Kč může vzniknout oznamovací povinnost. Pro rok 2025 a dřívější může platit historický limit 40 mil. Kč. U jiných měn aplikace nepočítá automatický převod do CZK. Nejde o výpočet daně — ověř úplnost celého portfolia a právní výjimky.")
     st.markdown("[Finanční správa ČR — daňové novinky pro rok 2026](https://financnisprava.gov.cz/cs/financni-sprava/media-a-verejnost/tiskove-zpravy-gfr/tiskove-zpravy-2026/danove-novinky-pro-rok-2026)")
     template = pd.DataFrame([
         {"Date":"2024-01-15","Ticker":"MSFT","Type":"BUY","Quantity":10,"Price":400,"Fees":1,"Currency":"USD"},
