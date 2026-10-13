@@ -1268,6 +1268,7 @@ def _apply_terminal_liquidation_cost(
         out.loc[out.index[-1], "Terminal liquidation turnover"] = exposure
         out.loc[out.index[-1], "Terminal liquidation cost"] = 0.0
         return out
+    liquidation_turnover = exposure * end_equity / before_equity
     cash_cost = end_equity * exposure * float(cost_bps) / 10_000
     final_equity = max(0.0, end_equity - cash_cost)
     extra_return_cost = cash_cost / before_equity
@@ -1277,12 +1278,12 @@ def _apply_terminal_liquidation_cost(
     if "Transaction cost" in out:
         out.loc[last, "Transaction cost"] = float(out.loc[last, "Transaction cost"]) + extra_return_cost
     if "Gross turnover" in out:
-        out.loc[last, "Gross turnover"] = float(out.loc[last, "Gross turnover"]) + exposure
+        out.loc[last, "Gross turnover"] = float(out.loc[last, "Gross turnover"]) + liquidation_turnover
     if "Estimated cost (bps of portfolio)" in out:
         out.loc[last, "Estimated cost (bps of portfolio)"] = (
             float(out.loc[last, "Estimated cost (bps of portfolio)"]) + extra_return_cost * 10_000
         )
-    out.loc[last, "Terminal liquidation turnover"] = exposure
+    out.loc[last, "Terminal liquidation turnover"] = liquidation_turnover
     out.loc[last, "Terminal liquidation cost"] = extra_return_cost
     return out
 
