@@ -1,4 +1,4 @@
-# Quality × Value × Momentum Lab — roadmap (research app v2.4.0)
+# Quality × Value × Momentum Lab — roadmap (research app v2.5.0)
 
 ## Finální cíl
 
@@ -17,6 +17,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 ## Fáze 1 — Data a provenance
 
 - [x] Oddělit cenový adapter od fundamentálního zdroje; přestat používat nestabilní Yahoo `.info` endpoint pro fundamenty.
+- [x] Zaznamenat měnu každého OHLCV tickeru, odmítnout nekonzistentní měnu v řadě a zablokovat portfolio hodnoty, backtest a sizing při známé ne-USD nebo smíšené měně, protože FX feed není implementován.
 - [x] Stahovat ceny v jedné neparalelní dávce, normalizovat různé tvary sloupců a při částečném selhání opakovat chybějící tickery sekvenčně.
 - [x] Vykazovat první/poslední datum cenové řady, počet řádků, chybějící řady a exportovat kontrolní CSV.
 - [x] Přidat oficiální SEC EDGAR Company Facts adaptér s identifikačním User-Agent, SIC kódem/popisem a opakováním při přechodných HTTP chybách.
