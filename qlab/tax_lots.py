@@ -74,11 +74,17 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
             proceeds = matched * price - matched * fee_per_share
             gain = proceeds - basis
             days = (txrow["Date"] - lot["Acquisition date"]).days
+            holding_period_end = lot["Acquisition date"] + pd.DateOffset(years=3)
+            passes_3y_test = pd.Timestamp(txrow["Date"]).normalize() > pd.Timestamp(holding_period_end).normalize()
             realized.append({
                 "Ticker": ticker, "Sale date": txrow["Date"],
                 "Acquisition date": lot["Acquisition date"],
-                "Holding days": days, "Quantity matched": matched,
-                "Unit sale price": price, "Allocated sale fees": matched * fee_per_share,
+                "Holding days": days,
+                "Holding period > 3 years": bool(passes_3y_test),
+                "Quantity matched": matched,
+                "Unit sale price": price,
+                "Gross sale proceeds": matched * price,
+                "Allocated sale fees": matched * fee_per_share,
                 "Cost basis incl. buy fees": basis, "Net proceeds": proceeds,
                 "Realized gain/loss": gain, "Currency": currency,
             })
@@ -100,7 +106,38 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
         annual = pd.DataFrame(columns=["Year", "Ticker", "Currency", "Realized gain/loss", "Matched quantity"])
     else:
         realized_df["Year"] = realized_df["Sale date"].dt.year
+        realized_df["Tax review status"] = "Review tax treatment and FX conversion"
+        for year, group in realized_df.groupby("Year"):
+            year_mask = realized_df["Year"].eq(year)
+            currencies = set(group["Currency"].astype(str).str.upper())
+            if currencies == {"CZK"}:
+                annual_gross = float(group["Gross sale proceeds"].sum())
+                if annual_gross <= 100_000:
+                    realized_df.loc[year_mask, "Tax review status"] = (
+                        "Potential value-test exemption: annual gross proceeds <= CZK 100,000; verify full portfolio"
+                    )
+                else:
+                    long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
+                    realized_df.loc[long_enough, "Tax review status"] = (
+                        "Potential 3-year time-test exemption; verify eligibility"
+                    )
+                    realized_df.loc[year_mask & ~realized_df["Holding period > 3 years"].astype(bool), "Tax review status"] = (
+                        "Time test not met: review taxable income and tax basis"
+                    )
+            else:
+                long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
+                realized_df.loc[long_enough, "Tax review status"] = (
+                    "Potential 3-year time-test exemption; CZK annual value test requires FX conversion"
+                )
+                realized_df.loc[year_mask & ~realized_df["Holding period > 3 years"].astype(bool), "Tax review status"] = (
+                    "Convert all annual proceeds to CZK; review tax treatment"
+                )
         annual = realized_df.groupby(["Year", "Ticker", "Currency"], as_index=False).agg(
-            **{"Realized gain/loss": ("Realized gain/loss", "sum"), "Matched quantity": ("Quantity matched", "sum")}
+            **{
+                "Realized gain/loss": ("Realized gain/loss", "sum"),
+                "Matched quantity": ("Quantity matched", "sum"),
+                "Gross sale proceeds": ("Gross sale proceeds", "sum"),
+                "Tax review status": ("Tax review status", lambda x: " | ".join(sorted(set(x)))),
+            }
         )
     return realized_df, open_df, annual
