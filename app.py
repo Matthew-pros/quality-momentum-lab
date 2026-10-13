@@ -111,17 +111,21 @@ def _daily_returns(frame):
     col = "Adj Close" if "Adj Close" in frame else "Close"
     return pd.to_numeric(frame[col], errors="coerce").dropna()
 
-def _make_fundamental_history(prices, bundles, use_estimated_value):
+def _make_fundamental_history(prices, bundles, use_estimated_value, price_currencies=None):
     close_frame = pd.DataFrame({
         ticker: frame["Adj Close"] if "Adj Close" in frame else frame["Close"]
         for ticker, frame in prices.items() if not frame.empty
     })
     monthly_dates = list(close_frame.resample("ME").last().dropna(how="all").index)
     histories = {}
+    price_currencies = price_currencies or {}
     for ticker, bundle in bundles.items():
         if ticker not in prices or not monthly_dates:
             continue
-        history = sec_snapshot_to_history(bundle, monthly_dates, prices[ticker]["Close"])
+        history = sec_snapshot_to_history(
+            bundle, monthly_dates, prices[ticker]["Close"],
+            price_currency=price_currencies.get(ticker),
+        )
         if not use_estimated_value:
             for column in ["FCF yield %", "P/E (annual EPS proxy)"]:
                 if column in history:
@@ -432,7 +436,10 @@ if valid_email:
                 sec_bundles[ticker] = bundle
                 raw_close = prices[ticker]["Close"].dropna() if ticker in prices else pd.Series(dtype=float)
                 last_price = float(raw_close.iloc[-1]) if not raw_close.empty else np.nan
-                fundamentals[ticker] = sec_fundamental_snapshot(bundle, datetime.now(timezone.utc).date(), last_price)
+                fundamentals[ticker] = sec_fundamental_snapshot(
+                    bundle, datetime.now(timezone.utc).date(), last_price,
+                    price_currency=currency_by_ticker.get(ticker),
+                )
             except Exception as exc:
                 sec_errors.append({"Ticker": ticker, "Error": f"{type(exc).__name__}: {exc}"})
             progress.progress((idx + 1) / max(1, len(valid_tickers)), text=f"SEC data: {idx + 1}/{len(valid_tickers)}")
@@ -629,7 +636,9 @@ with tab_strategy:
         try:
             with st.spinner("Počítám historické signály, point-in-time fundamenty a rebalancování…"):
                 if use_pit and sec_bundles:
-                    fund_histories = _make_fundamental_history(prices, sec_bundles, use_estimated_value)
+                    fund_histories = _make_fundamental_history(
+                        prices, sec_bundles, use_estimated_value, price_currencies=currency_by_ticker
+                    )
                 all_closes = pd.DataFrame({t: f["Adj Close"] if "Adj Close" in f else f["Close"] for t,f in prices.items() if not f.empty})
                 monthly_dates = list(all_closes.resample("ME").last().dropna(how="all").index)
                 sentiment_history = signal_history(sentiment_df, "Sentiment score", monthly_dates) if sentiment_df is not None else {}
