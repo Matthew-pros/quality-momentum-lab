@@ -197,7 +197,11 @@ def _concept_records(company_facts: dict[str, Any], tags: list[str], cutoff: str
                 for obs in observations:
                     filed = str(obs.get("filed", ""))
                     end = str(obs.get("end", ""))
-                    if not filed or not end or filed > cutoff_text or end > cutoff_text:
+                    # Conservative close-based backtest convention: a filing dated
+                    # on the decision day is assumed unavailable until the next session,
+                    # because SEC Company Facts gives a filing date but not a reliable
+                    # intraday timestamp for this purpose.
+                    if not filed or not end or filed >= cutoff_text or end > cutoff_text:
                         continue
                     row = dict(obs)
                     row["unit"] = unit
