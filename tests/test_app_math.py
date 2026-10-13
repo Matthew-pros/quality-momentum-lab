@@ -280,3 +280,27 @@ def test_czech_tax_review_flags_value_test_and_three_year_test_without_claiming_
     assert realized_large.iloc[0]["Holding period > 3 years"]
     assert "3-year time-test exemption" in realized_large.iloc[0]["Tax review status"]
     assert annual_large.iloc[0]["Gross sale proceeds"] == pytest.approx(500_000)
+
+
+def test_monthly_replacement_cap_limits_refills_after_exit():
+    from qlab.strategy import select_with_hysteresis
+
+    scores = pd.Series({"A": 80.0, "B": 78.0, "C": 75.0, "D": 72.0, "E": 70.0})
+    eligible = pd.Series({"A": True, "B": False, "C": True, "D": True, "E": True})
+    selected = select_with_hysteresis(
+        scores, eligible, previous={"A", "B", "C"}, top_n=3,
+        min_improvement=7.0, exit_score_floor=30.0, max_replacements=1,
+    )
+    assert selected == {"A", "C", "D"}
+
+
+def test_initial_portfolio_can_fill_target_count_before_monthly_replacement_limit():
+    from qlab.strategy import select_with_hysteresis
+
+    scores = pd.Series({"A": 90.0, "B": 80.0, "C": 70.0, "D": 60.0})
+    eligible = pd.Series(True, index=scores.index)
+    selected = select_with_hysteresis(
+        scores, eligible, previous=set(), top_n=3,
+        min_improvement=7.0, exit_score_floor=30.0, max_replacements=1,
+    )
+    assert selected == {"A", "B", "C"}
