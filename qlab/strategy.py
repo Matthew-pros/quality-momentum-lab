@@ -361,13 +361,15 @@ def run_monthly_backtest(
     if not prices:
         return None, None, None
     adjusted = {}
-    indicator_cache = {ticker: calculate_indicators(frame) for ticker, frame in prices.items()}
+    indicator_cache = {}
+    for ticker, frame in prices.items():
         if frame is None or frame.empty:
             continue
         col = "Adj Close" if "Adj Close" in frame else "Close"
         series = _num(frame[col]).dropna()
         if len(series) >= 300:
             adjusted[ticker] = series
+            indicator_cache[ticker] = calculate_indicators(frame)
     if len(adjusted) < 2:
         return None, None, None
     daily_prices = pd.DataFrame(adjusted).sort_index()
