@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -555,6 +555,19 @@ with tab_strategy:
         ret_fig = px.bar(curve.reset_index(), x="Date", y="Net return", title="Čistý měsíční výnos", template="plotly_dark")
         ret_fig.update_layout(height=280,paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(ret_fig, width="stretch")
+        st.markdown("#### Historická expozice podle SIC skupiny")
+        exposure_summary = industry_exposure_summary(audit, sector_map=sector_map)
+        if exposure_summary.empty:
+            st.caption("Pro vybraný backtest není k dispozici audit vah.")
+        else:
+            st.dataframe(exposure_summary, width="stretch", hide_index=True, column_config={
+                "Average weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                "Maximum weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                "Share of rebalance months %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Average number of positions": st.column_config.NumberColumn(format="%.2f"),
+            })
+            st.caption("Souhrn přiřazuje historicky držené tickery k současné SEC SIC skupině; nejde o point-in-time sektorovou historii ani o GICS/ICB klasifikaci.")
+            st.download_button("Stáhnout SIC expozice CSV", exposure_summary.to_csv(index=False).encode("utf-8"), "industry_exposure_summary.csv", "text/csv")
         with st.expander("Audit každého rebalancování"):
             st.dataframe(audit, width="stretch", hide_index=True)
         st.dataframe(curve, width="stretch")
