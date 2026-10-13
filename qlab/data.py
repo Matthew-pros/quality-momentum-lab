@@ -85,7 +85,7 @@ def assess_price_quality(
     report: pd.DataFrame | None = None,
     now=None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-    """Add deterministic freshness, invalid-price, and extreme-return flags per ticker."""
+    """Flag stale/extreme price series and exclude invalid OHLC rows from calculations."""
     if report is None:
         report = pd.DataFrame({"Ticker": list(prices)})
     else:
@@ -100,6 +100,7 @@ def assess_price_quality(
     if now_ts.tzinfo:
         now_ts = now_ts.tz_localize(None)
     quality_rows = []
+    sanitized: dict[str, pd.DataFrame] = {}
     for ticker in report["Ticker"].astype(str):
         frame = prices.get(ticker)
         quality_row: dict[str, Any] = {
@@ -113,26 +114,45 @@ def assess_price_quality(
         if frame is None or frame.empty or "Close" not in frame:
             quality_rows.append(quality_row)
             continue
-        close = pd.to_numeric(frame["Close"], errors="coerce")
+        clean = frame.copy().sort_index()
+        close = pd.to_numeric(clean["Close"], errors="coerce")
         invalid = (~np.isfinite(close) | (close <= 0))
-        if "High" in frame and "Low" in frame:
-            high = pd.to_numeric(frame["High"], errors="coerce")
-            low = pd.to_numeric(frame["Low"], errors="coerce")
+        if "Adj Close" in clean:
+            adjusted_close = pd.to_numeric(clean["Adj Close"], errors="coerce")
+            invalid |= (~np.isfinite(adjusted_close) | (adjusted_close <= 0))
+        if "High" in clean and "Low" in clean:
+            high = pd.to_numeric(clean["High"], errors="coerce")
+            low = pd.to_numeric(clean["Low"], errors="coerce")
             invalid |= high.notna() & low.notna() & (high < low)
-        ret_col = "Adj Close" if "Adj Close" in frame else "Close"
-        ret = pd.to_numeric(frame[ret_col], errors="coerce").pct_change(fill_method=None)
+        invalid_count = int(invalid.sum())
+        # Keep the original invalid-row count in report but prevent invalid values from
+        # contaminating technicals, price levels, returns, or position sizing.
+        price_columns = [
+            column for column in [
+                "Open", "High", "Low", "Close", "Adj Close",
+                "Adj Open", "Adj High", "Adj Low",
+            ] if column in clean
+        ]
+        clean.loc[invalid, price_columns] = np.nan
+        sanitized[ticker] = clean
+
+        ret_col = "Adj Close" if "Adj Close" in clean else "Close"
+        ret = pd.to_numeric(clean[ret_col], errors="coerce").pct_change(fill_method=None)
         ret = ret.replace([np.inf, -np.inf], np.nan).dropna()
         max_move = float(ret.abs().max() * 100) if not ret.empty else np.nan
-        last_date = pd.Timestamp(frame.index.max())
-        if last_date.tzinfo:
-            last_date = last_date.tz_localize(None)
-        stale = max(0, int((now_ts - last_date.normalize()).days))
-        invalid_count = int(invalid.sum())
+        last_valid = clean["Close"].last_valid_index()
+        if last_valid is None:
+            stale = int((now_ts - pd.Timestamp(clean.index.max()).normalize()).days)
+        else:
+            last_date = pd.Timestamp(last_valid)
+            if last_date.tzinfo:
+                last_date = last_date.tz_localize(None)
+            stale = max(0, int((now_ts - last_date.normalize()).days))
         flags = []
         if stale > 7:
             flags.append(f"stale {stale} calendar days")
         if invalid_count:
-            flags.append(f"{invalid_count} invalid price rows")
+            flags.append(f"{invalid_count} invalid price rows excluded")
         if pd.notna(max_move) and max_move >= 30:
             flags.append(f"large daily return {max_move:.1f}%")
         quality_row.update({
@@ -155,8 +175,18 @@ def assess_price_quality(
     for column in ["Rows", "Calendar days stale", "Invalid price rows", "Max abs daily return %", "Missing %"]:
         if column in report:
             report[column] = pd.to_numeric(report[column], errors="coerce")
-    return prices, report
-
+    # Refresh reported valid row count and missingness after invalid data were excluded.
+    for ticker, clean in sanitized.items():
+        mask = report["Ticker"].astype(str).eq(ticker)
+        if mask.any():
+            valid_close = pd.to_numeric(clean["Close"], errors="coerce")
+            report.loc[mask, "Rows"] = int(valid_close.notna().sum())
+            report.loc[mask, "Missing %"] = round(float(valid_close.isna().mean() * 100), 2)
+    # Preserve price series that were absent from the quality report (e.g. extra CSV tickers).
+    for ticker, frame in prices.items():
+        if ticker not in sanitized and (report["Ticker"].astype(str) == ticker).any() is False:
+            sanitized[ticker] = frame.copy()
+    return sanitized, report
 
 def download_market_data(
     tickers: str | list[str],
