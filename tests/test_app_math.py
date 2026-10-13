@@ -139,8 +139,8 @@ def test_fifo_ledger_matches_lots_and_allocates_fees():
     assert np.isclose(realized["Quantity matched"].sum(), 12)
     assert len(realized) == 2
     assert open_lots["Remaining quantity"].sum() == pytest.approx(3)
-    # Buy fee/unit 1, sell fee/unit 1: first lot P/L = 12*(130-1) - 12*101.
-    assert realized.iloc[0]["Realized gain/loss"] == pytest.approx(336)
+    # Buy fee/unit 1, sell fee/unit 1: first lot P/L = 10*(129-101).
+    assert realized.iloc[0]["Realized gain/loss"] == pytest.approx(280)
     assert annual["Realized gain/loss"].sum() == pytest.approx(realized["Realized gain/loss"].sum())
 
 
