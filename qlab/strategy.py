@@ -538,6 +538,8 @@ def run_monthly_backtest(
     max_position_weight: float = 0.35,
     stop_mode: str = "Month-end 50-day low",
     stop_atr_multiple: float = 3.0,
+    sector_map: dict[str, str] | None = None,
+    max_sector_positions: int | None = 2,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -619,6 +621,7 @@ def run_monthly_backtest(
             scores, eligible, previous_holdings, top_n,
             min_improvement=hysteresis, exit_score_floor=min_score,
             max_replacements=max_replacements,
+            sector_map=sector_map, max_sector_positions=max_sector_positions,
         )
         row_return_date = monthly.index[i + 1]
         selected = sorted(picks)
@@ -721,6 +724,10 @@ def run_monthly_backtest(
                     new_weights.get(ticker, 0.0) * (1 + ticker_returns[ticker]) / (1 + net_return)
                 )
         effective_exposure = sum(drifted_weights.values()) * 100
+        sic_group_weights: dict[str, float] = {}
+        for ticker, weight in new_weights.items():
+            group = str((sector_map or {}).get(ticker, "Unclassified") or "Unclassified")
+            sic_group_weights[group] = sic_group_weights.get(group, 0.0) + float(weight)
         rows.append({
             "Date": row_return_date,
             "Signal date": decision_date,
@@ -740,6 +747,7 @@ def run_monthly_backtest(
             "Gross exposure %": effective_exposure,
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
             "Surviving weights": ", ".join(f"{ticker}:{drifted_weights[ticker]:.3f}" for ticker in sorted(drifted_weights)),
+            "SIC group weights": " | ".join(f"{group}:{weight:.1%}" for group, weight in sorted(sic_group_weights.items())),
             "Rebalance turnover": rebalance_turnover,
             "Stop turnover": stop_turnover,
             "Gross turnover": turnover,
@@ -763,6 +771,8 @@ def run_monthly_backtest(
             "Stop exits": " | ".join(stop_exit_details),
             "Stop mode": stop_mode,
             "Weighting method": weighting_method,
+            "Max positions per SIC group": max_sector_positions if max_sector_positions else "Off",
+            "Selected SIC groups": " | ".join(f"{ticker}:{(sector_map or {}).get(ticker, 'Unclassified')}" for ticker in selected),
             "Eligible names": ", ".join(sorted(eligible[eligible].index)),
             "Min ADX": min_adx,
             "Min score": min_score,
@@ -801,6 +811,7 @@ def run_monthly_backtest(
         "Exit events": int(total_exit_events),
         "Average holding days (closed positions)": float(np.mean(closed_holding_days)) if closed_holding_days else np.nan,
         "Median holding days (closed positions)": float(np.median(closed_holding_days)) if closed_holding_days else np.nan,
+        "Average SIC group weight %": float(curve["SIC group weights"].notna().mean() * 100) if "SIC group weights" in curve else np.nan,
     }
     if benchmark is not None and not benchmark.empty:
         bench = benchmark.dropna().resample("ME").last().pct_change(fill_method=None)
