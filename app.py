@@ -586,6 +586,49 @@ with tab_strategy:
                 st.session_state["train_select_holdout"] = {
                     "signature": signature, "error": f"{type(exc).__name__}: {exc}",
                 }
+
+    if walk_forward_button:
+        if saved is None or saved.get("signature") != signature or saved.get("error") or saved.get("curve") is None:
+            st.session_state["expanding_walk_forward"] = {
+                "signature": signature,
+                "error": "Nejprve spusť platný základní backtest pro aktuální data a parametry.",
+            }
+        else:
+            try:
+                score_candidates = tuple(sorted(set([
+                    max(0.0, min_score - 10.0), float(min_score), min(80.0, min_score + 10.0)
+                ])))
+                hysteresis_candidates = tuple(sorted(set([
+                    max(0.0, hysteresis - 4.0), float(hysteresis), min(25.0, hysteresis + 4.0)
+                ])))
+                benchmark_series = _daily_returns(price_data_all[benchmark_ticker]) if benchmark_ticker in price_data_all else None
+                with st.spinner("Běží expanding walk-forward: trénink pouze z minulosti, oddělené OOS foldy a likvidace na hranicích…"):
+                    folds, candidate_table, oos_curve, wf_metrics = expanding_walk_forward(
+                        prices=prices,
+                        min_score_candidates=score_candidates,
+                        hysteresis_candidates=hysteresis_candidates,
+                        train_months=24, test_months=6, step_months=6, min_train_months=18,
+                        benchmark=benchmark_series, top_n=top_n, cost_bps=cost_bps,
+                        initial=capital, min_adx=min_adx, min_score=min_score, hysteresis=hysteresis,
+                        max_replacements=max_replacements, use_fundamentals=use_pit,
+                        fundamentals_history=saved.get("fundamentals_history", {}),
+                        optional_history=saved.get("optional_history", {}),
+                        require_breakout=breakout_filter, weighting_method=weighting_method,
+                        max_position_weight=backtest_max_weight, stop_mode=stop_mode,
+                        stop_atr_multiple=stop_atr, sector_map=sector_map,
+                        max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
+                        commission_bps=commission_bps, half_spread_bps=half_spread_bps,
+                        slippage_bps=slippage_bps,
+                    )
+                st.session_state["expanding_walk_forward"] = {
+                    "signature": signature, "folds": folds, "candidates": candidate_table,
+                    "curve": oos_curve, "metrics": wf_metrics, "error": None,
+                }
+            except Exception as exc:
+                st.session_state["expanding_walk_forward"] = {
+                    "signature": signature, "error": f"{type(exc).__name__}: {exc}",
+                }
+
     if saved is None:
         st.info("Backtest ještě nebyl spuštěn. Spusť výpočet tlačítkem výše.")
     elif saved.get("signature") != signature:
