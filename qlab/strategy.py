@@ -549,6 +549,48 @@ def run_monthly_backtest(
     return curve, metrics, pd.DataFrame(audit)
 
 
+def cost_sensitivity(
+    curve: pd.DataFrame,
+    initial: float = 10_000,
+    cost_scenarios_bps: tuple[float, ...] = (0, 15, 30, 50),
+) -> pd.DataFrame:
+    """Reprice the same audited signal path under alternative transaction-cost assumptions."""
+    if curve is None or curve.empty:
+        return pd.DataFrame()
+    required = {"Gross return", "Gross turnover"}
+    if not required.issubset(curve.columns):
+        raise ValueError(f"Backtest curve must include: {', '.join(sorted(required))}")
+    gross = pd.to_numeric(curve["Gross return"], errors="coerce").fillna(0.0)
+    turnover = pd.to_numeric(curve["Gross turnover"], errors="coerce").fillna(0.0).clip(lower=0)
+    rows = []
+    months = len(curve)
+    years = months / 12.0
+    for bps in cost_scenarios_bps:
+        if float(bps) < 0:
+            raise ValueError("Transaction costs cannot be negative.")
+        estimated_cost = turnover * float(bps) / 10_000
+        net = gross - estimated_cost
+        equity = float(initial) * (1 + net).cumprod()
+        final_equity = float(equity.iloc[-1])
+        cagr = (final_equity / float(initial)) ** (1 / years) - 1 if years > 0 and final_equity > 0 else np.nan
+        volatility = float(net.std(ddof=1) * np.sqrt(12)) if len(net) > 1 else np.nan
+        sharpe = float(net.mean() * 12 / volatility) if pd.notna(volatility) and volatility > 0 else np.nan
+        wealth = np.r_[float(initial), equity.to_numpy()]
+        high_water = np.maximum.accumulate(wealth)[1:]
+        drawdown = equity.to_numpy() / high_water - 1
+        rows.append({
+            "Cost (bps)": float(bps),
+            "CAGR": cagr,
+            "Volatility": volatility,
+            "Sharpe (rf=0)": sharpe,
+            "Max drawdown": float(np.min(drawdown)),
+            "Final equity": final_equity,
+            "Total modelled cost (% of starting equity sum)": float(estimated_cost.sum() * 100),
+            "Average monthly turnover %": float(turnover.mean() * 100),
+        })
+    return pd.DataFrame(rows)
+
+
 def calculate_position_sizes(
     screener: pd.DataFrame,
     selected_tickers: list[str],
