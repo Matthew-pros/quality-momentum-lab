@@ -360,3 +360,37 @@ def test_market_quality_report_flags_stale_invalid_and_extreme_prices():
     assert row["Calendar days stale"] > 7
     assert row["Invalid price rows"] == 1
     assert row["Max abs daily return %"] >= 30
+
+
+def test_sec_history_reprices_between_filings_without_changing_reported_fundamentals():
+    from qlab.data import sec_snapshot_to_history
+
+    def annual(values, filed):
+        return {"USD": [
+            {"start":"2021-01-01","end":"2021-12-31","val":values[0],"filed":filed[0],"form":"10-K"},
+            {"start":"2022-01-01","end":"2022-12-31","val":values[1],"filed":filed[1],"form":"10-K"},
+        ]}
+    facts = {"facts":{"us-gaap":{
+        "Revenues":{"units":annual([100,150],["2022-02-15","2023-02-15"])},
+        "NetIncomeLoss":{"units":annual([10,15],["2022-02-15","2023-02-15"])},
+        "NetCashProvidedByUsedInOperatingActivities":{"units":annual([18,25],["2022-02-15","2023-02-15"])},
+        "PaymentsToAcquirePropertyPlantAndEquipment":{"units":annual([4,5],["2022-02-15","2023-02-15"])},
+        "StockholdersEquity":{"units":{"USD":[
+            {"end":"2022-12-31","val":60,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+        "LongTermDebtNoncurrent":{"units":{"USD":[
+            {"end":"2022-12-31","val":12,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+        "EntityCommonStockSharesOutstanding":{"units":{"shares":[
+            {"end":"2022-12-31","val":100,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+    }}}
+    bundle = {"ticker":"AAA","title":"AAA Inc.","payload":facts}
+    dates = pd.to_datetime(["2023-03-31","2023-04-30"])
+    prices = pd.Series([10.0,20.0], index=pd.to_datetime(["2023-03-31","2023-04-28"]))
+    history = sec_snapshot_to_history(bundle, list(dates), prices)
+    assert history.iloc[0]["Revenue"] == history.iloc[1]["Revenue"] == 150
+    assert history.iloc[0]["As of"] == "2023-03-31"
+    assert history.iloc[1]["As of"] == "2023-04-30"
+    assert history.iloc[1]["Estimated market cap"] == pytest.approx(2 * history.iloc[0]["Estimated market cap"])
+    assert history.iloc[1]["P/E (annual EPS proxy)"] == pytest.approx(2 * history.iloc[0]["P/E (annual EPS proxy)"])
