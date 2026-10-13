@@ -738,9 +738,10 @@ def run_monthly_backtest(
                 )
         effective_exposure = sum(drifted_weights.values()) * 100
         sic_group_weights: dict[str, float] = {}
-        for ticker, weight in new_weights.items():
+        for ticker, weight in drifted_weights.items():
             group = str((sector_map or {}).get(ticker, "Unclassified") or "Unclassified")
             sic_group_weights[group] = sic_group_weights.get(group, 0.0) + float(weight)
+        max_sic_group_weight_pct = max(sic_group_weights.values(), default=0.0) * 100
         rows.append({
             "Date": row_return_date,
             "Signal date": decision_date,
@@ -761,6 +762,8 @@ def run_monthly_backtest(
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
             "Surviving weights": ", ".join(f"{ticker}:{drifted_weights[ticker]:.3f}" for ticker in sorted(drifted_weights)),
             "SIC group weights": " | ".join(f"{group}:{weight:.1%}" for group, weight in sorted(sic_group_weights.items())),
+            "Max SIC group weight %": max_sic_group_weight_pct,
+            "Distinct SIC groups": len(sic_group_weights),
             "Rebalance turnover": rebalance_turnover,
             "Stop turnover": stop_turnover,
             "Gross turnover": turnover,
@@ -824,7 +827,7 @@ def run_monthly_backtest(
         "Exit events": int(total_exit_events),
         "Average holding days (closed positions)": float(np.mean(closed_holding_days)) if closed_holding_days else np.nan,
         "Median holding days (closed positions)": float(np.median(closed_holding_days)) if closed_holding_days else np.nan,
-        "Average SIC group weight %": float(curve["SIC group weights"].notna().mean() * 100) if "SIC group weights" in curve else np.nan,
+        "Average max SIC group weight %": float(curve["Max SIC group weight %"].mean()),
     }
     if benchmark is not None and not benchmark.empty:
         bench = benchmark.dropna().resample("ME").last().pct_change(fill_method=None)
