@@ -159,7 +159,7 @@ with st.sidebar:
     breakout_filter = st.selectbox("Vstupní průraz", ["None", "20-day", "55-day"], index=0)
     weighting_method = st.selectbox("Váhy pozic v backtestu", ["Equal weight", "Inverse ATR"], index=0,
         help="Inverse ATR váží nižší volatilitu vyšší vahou; limit pozice může ponechat část portfolia v hotovosti.")
-    backtest_max_weight = st.slider("Max. váha pozice v backtestu (%)", 10, 50, 35, 5) / 100
+    backtest_max_weight = st.slider("Max. váha pro Inverse ATR (%)", 10, 50, 35, 5, disabled=weighting_method != "Inverse ATR") / 100
     cost_bps = st.slider("Náklady na zobchodovaný objem (bps)", 0, 100, 15, 5)
     st.divider()
     capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
