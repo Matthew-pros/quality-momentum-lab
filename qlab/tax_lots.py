@@ -180,4 +180,4 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                 "Tax review status": ("Tax review status", lambda x: " | ".join(sorted(set(x)))),
             }
         )
-return realized_df, open_df, annual
+    return realized_df, open_df, annual
