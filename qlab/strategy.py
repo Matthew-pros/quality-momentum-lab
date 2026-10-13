@@ -562,6 +562,9 @@ def run_monthly_backtest(
     stop_atr_multiple: float = 3.0,
     sector_map: dict[str, str] | None = None,
     max_sector_positions: int | None = 2,
+    commission_bps: float | None = None,
+    half_spread_bps: float = 0.0,
+    slippage_bps: float = 0.0,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -581,6 +584,12 @@ def run_monthly_backtest(
         raise ValueError(f"Unsupported stop_mode: {stop_mode}")
     if stop_atr_multiple <= 0:
         raise ValueError("stop_atr_multiple must be positive.")
+    components = [half_spread_bps, slippage_bps] + ([] if commission_bps is None else [commission_bps])
+    if any(not np.isfinite(float(value)) or float(value) < 0 for value in components):
+        raise ValueError("Commission, spread and slippage cost assumptions must be finite and non-negative.")
+    effective_cost_bps = float(cost_bps) if commission_bps is None else float(commission_bps) + float(half_spread_bps) + float(slippage_bps)
+    if effective_cost_bps < 0 or not np.isfinite(effective_cost_bps):
+        raise ValueError("Total cost bps must be finite and non-negative.")
     if not prices:
         return None, None, None
     adjusted = {}
@@ -734,8 +743,8 @@ def run_monthly_backtest(
             for ticker in stopped
         )
         turnover = rebalance_turnover + stop_turnover
-        transaction_cost = turnover * float(cost_bps) / 10_000
-        stop_transaction_cost = stop_turnover * float(cost_bps) / 10_000
+        transaction_cost = turnover * effective_cost_bps / 10_000
+        stop_transaction_cost = stop_turnover * effective_cost_bps / 10_000
         net_return = gross_return - transaction_cost
         equity *= (1 + net_return)
         survivors = [ticker for ticker in selected if ticker not in stopped]
@@ -806,7 +815,10 @@ def run_monthly_backtest(
             "Stop turnover": stop_turnover,
             "Gross turnover": turnover,
             "Stop transaction cost": stop_transaction_cost,
-            "Cost bps": cost_bps,
+            "Cost bps": effective_cost_bps,
+            "Commission bps": commission_bps if commission_bps is not None else np.nan,
+            "Half-spread bps": half_spread_bps,
+            "Slippage bps": slippage_bps,
         })
         previous_holdings = set(survivors)
         previous_weights = drifted_weights
