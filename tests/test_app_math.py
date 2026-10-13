@@ -490,3 +490,24 @@ def test_atr_trailing_stop_carries_high_water_from_prior_month_not_all_time_peak
     assert reason2 == "ATR trailing stop"
     assert exit_date == stop_date.date().isoformat()
     assert ret < 0
+
+
+def test_chronological_period_summary_splits_in_time_order_and_reports_holdout():
+    from qlab.strategy import chronological_period_summary
+
+    index = pd.date_range("2020-01-31", periods=20, freq="ME")
+    returns = np.array([0.01] * 12 + [-0.03] * 4 + [0.02] * 4)
+    curve = pd.DataFrame({
+        "Net return": returns,
+        "Gross turnover": np.full(20, 0.2),
+        "Gross exposure %": np.full(20, 90.0),
+        "Stops triggered": np.zeros(20, dtype=int),
+        "Benchmark return": np.full(20, 0.005),
+    }, index=index)
+    summary = chronological_period_summary(curve, initial=10_000)
+    assert summary["Period"].tolist() == ["Train", "Validation", "Holdout"]
+    assert summary["Months"].tolist() == [12, 4, 4]
+    assert summary.iloc[0]["End date"] < summary.iloc[1]["Start date"]
+    assert summary.iloc[1]["End date"] < summary.iloc[2]["Start date"]
+    assert summary.iloc[2]["CAGR"] > summary.iloc[1]["CAGR"]
+    assert "Benchmark CAGR" in summary.columns
