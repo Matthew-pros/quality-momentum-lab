@@ -453,6 +453,9 @@ def test_monthly_backtest_supports_daily_stop_mode_and_audit_columns():
     assert "Stop mode" in audit.columns
     assert "Ticker returns" in audit.columns
     assert "Stop turnover" in curve.columns
+    assert "Entry events" in curve.columns
+    assert "Exit events" in curve.columns
+    assert "Average holding days (closed positions)" in metrics
     assert (curve["Gross turnover"] >= curve["Rebalance turnover"] - 1e-12).all()
     assert np.allclose(curve["Transaction cost"], curve["Gross turnover"] * 10 / 10_000)
 
