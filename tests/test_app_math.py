@@ -844,3 +844,55 @@ def test_dcf_rejects_growth_below_minus_100_percent_and_noninteger_horizon():
         calculate_fcfe_dcf(100, -1.1, 0.10, 0.02, years=5)
     with pytest.raises(ValueError, match="integer from 1 to 20"):
         calculate_fcfe_dcf(100, 0.03, 0.10, 0.02, years=2.5)
+
+
+def test_train_only_parameter_search_reports_holdout_for_only_the_training_winner():
+    from qlab.strategy import train_select_holdout_search
+
+    candidates, chosen, holdout, metrics = train_select_holdout_search(
+        prices=synthetic_prices(1600),
+        min_score_candidates=(0.0, 20.0),
+        hysteresis_candidates=(0.0, 7.0),
+        train_fraction=0.60,
+        min_train_months=12,
+        min_holdout_months=6,
+        top_n=2,
+        cost_bps=10,
+        initial=10_000,
+        min_adx=0,
+        min_score=0,
+        hysteresis=7,
+        max_replacements=1,
+        use_fundamentals=False,
+        stop_mode="No stop / month-end rebalancing",
+    )
+    assert len(candidates) == 4
+    assert candidates["Selected by train"].sum() == 1
+    assert "Holdout CAGR" not in candidates.columns
+    assert chosen["min_score"] in {0.0, 20.0}
+    assert chosen["hysteresis"] in {0.0, 7.0}
+    assert len(holdout) >= 6
+    assert metrics["Holdout months"] == len(holdout)
+    assert np.isfinite(metrics["Holdout CAGR"])
+    assert holdout.index.is_monotonic_increasing
+
+
+def test_train_only_parameter_search_rejects_insufficient_history():
+    from qlab.strategy import train_select_holdout_search
+
+    tiny = synthetic_prices(400)
+    with pytest.raises(ValueError, match="No candidate had sufficient"):
+        train_select_holdout_search(
+            prices=tiny,
+            min_score_candidates=(20.0,),
+            hysteresis_candidates=(7.0,),
+            train_fraction=0.60,
+            min_train_months=30,
+            min_holdout_months=24,
+            top_n=2,
+            cost_bps=0,
+            initial=10_000,
+            min_adx=0,
+            min_score=20,
+            use_fundamentals=False,
+        )
