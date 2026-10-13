@@ -54,3 +54,8 @@ streamlit run app.py
 4. Add analyst revisions and news sentiment only where historical timestamps and usage rights are available.
 5. Add walk-forward and sensitivity tests, then compare to a benchmark.
 6. Consider HMM only if it improves out-of-sample risk-adjusted results net of costs.
+
+
+## Development roadmap and tests
+
+The prioritized release plan and validation gates are tracked in [ROADMAP.md](ROADMAP.md). Deterministic regression tests live in `tests/test_app_math.py` and run via the GitHub Actions workflow in `.github/workflows/quality-checks.yml`.
