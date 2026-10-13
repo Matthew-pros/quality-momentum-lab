@@ -52,7 +52,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat citlivost CAGR/volatility/Sharpe/drawdown na různé náklady při zachování stejné historie signálů.
 - [x] Přidat 60/20/20 chronologické diagnostické rozdělení Train / Validation / Holdout včetně benchmarku (není to automatizovaný walk-forward optimizer; holdout zůstává nedotčený jen tehdy, pokud se parametry podle něj neupravují).
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
-- [ ] Nahradit hrubý close-to-close cost proxy realistickým modelem exekuce: přesné open/close fill, bid/ask spread, skluz, komise, likvidita, FX, dividendy a corporate actions.
+- [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
+- [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
 - [ ] Přidat walk-forward, oddělený vývojový/testovací vzorek, benchmarky napříč regiony a report sektorových/regime expozic.
 - [ ] Prokázat, že chybějící/delistované výnosy nezkreslují výsledek; aktuální seznam tickerů stále vytváří survivorship bias.
 
@@ -66,9 +67,11 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat FIFO evidence nákupů/prodejů s rozdělením poplatků, realizovaným výsledkem a otevřenými loty.
 - [x] Přidat předběžné daňové kontrolní štítky pro české osvobození (CZK roční hrubý hodnotový test a více než tříletý časový test) podle oficiálního shrnutí pro rok 2026.
 - [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje za celý rok, corporate actions, dědictví a výjimky (např. obchodní majetek); nesmí to být považováno za finální výpočet daně.
-- [ ] Přidat sektorové limity, portfolio-level risk budget, počet obchodů, dobu držení a příspěvek nákladů.
+- [x] Přidat omezení počtu pozic podle současné hrubé SEC SIC skupiny, report skupinové expozice, počty vstupů/výstupů, průměrnou dobu držení a nákladové komponenty.
+- [x] Přidat portfolio-level souhrnný risk budget do ATR sizing kalkulátoru a škálovat celé kusy pod cap.
+- [ ] Získat point-in-time historické klasifikace a nahradit hrubé SIC skupiny srovnatelnou historickou sektorovou klasifikací; současné SIC metadata nejsou GICS/ICB a mohou se měnit.
 - [x] Umožnit porovnání variant 50denního minima a ATR trailing stopu jako samostatných nastavení, ne jako předem jistého zlepšení.
-- [ ] Přidat sektorové limity a portfolio-level risk budget; současné limity se týkají jednotlivé pozice a celkové expozice.
+- [ ] Ověřit limity na širším portfoliu a doplnit sektorové limity s historickou point-in-time klasifikací.
 
 **Daňové upozornění:** modul zatím neurčuje daňovou povinnost, sazbu ani obsah přiznání. Pro orientaci vychází z veřejného shrnutí Finanční správy: https://financnisprava.gov.cz/cs/financni-sprava/media-a-verejnost/tiskove-zpravy-gfr/tiskove-zpravy-2026/danove-novinky-pro-rok-2026. U konkrétních případů je třeba ověřit zákonné podmínky a úplnost celého portfolia.
 
