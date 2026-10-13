@@ -473,18 +473,83 @@ def sec_fundamental_snapshot(
     }
 
 
+def _all_filing_dates(company_facts: dict[str, Any]) -> list[date]:
+    """Collect filed dates once so historical snapshots can be recalculated only on filing events."""
+    found: set[date] = set()
+    for taxonomy in company_facts.get("facts", {}).values():
+        for node in taxonomy.values():
+            for observations in node.get("units", {}).values():
+                for row in observations:
+                    filed = row.get("filed")
+                    if not filed:
+                        continue
+                    try:
+                        found.add(pd.Timestamp(filed).date())
+                    except (TypeError, ValueError):
+                        continue
+    return sorted(found)
+
+
+def _reprice_snapshot(snapshot: dict[str, Any], as_of: date, latest_price: float) -> dict[str, Any]:
+    """Update only price-dependent valuation fields while financial disclosures are unchanged."""
+    row = dict(snapshot)
+    row["As of"] = as_of.isoformat()
+    shares = pd.to_numeric(pd.Series([row.get("Shares outstanding (reported)", np.nan)]), errors="coerce").iloc[0]
+    income = pd.to_numeric(pd.Series([row.get("Net income", np.nan)]), errors="coerce").iloc[0]
+    fcf = pd.to_numeric(pd.Series([row.get("FCF", np.nan)]), errors="coerce").iloc[0]
+    market_cap = (
+        float(latest_price) * float(shares)
+        if pd.notna(latest_price) and latest_price > 0 and pd.notna(shares) and shares > 0
+        else np.nan
+    )
+    row["Estimated market cap"] = market_cap
+    row["P/E (annual EPS proxy)"] = market_cap / income if pd.notna(market_cap) and pd.notna(income) and income > 0 else np.nan
+    row["FCF yield %"] = fcf / market_cap * 100 if pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0 else np.nan
+    return row
+
+
 def sec_snapshot_to_history(
     fact_bundle: dict[str, Any],
     dates: list[pd.Timestamp],
     prices: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """Build filing-date-safe annual fundamental snapshots at requested decision dates."""
-    rows = []
-    for ts in dates:
-        price = np.nan
-        if prices is not None:
-            known = prices.loc[prices.index <= ts].dropna()
+    """Build filing-date-safe monthly snapshots, recalculating fundamentals on new filing events only.
+
+    This avoids repeatedly scanning a full SEC XBRL payload for every month in a multi-year test.
+    A filing dated on the decision day is withheld until a later decision date to avoid close-time leakage.
+    """
+    requested = pd.DatetimeIndex(pd.to_datetime(dates), name="Decision date")
+    if requested.empty:
+        return pd.DataFrame(index=requested)
+    ordered = requested.sort_values().unique()
+    filing_dates = _all_filing_dates(fact_bundle["payload"])
+    price_series = None
+    if prices is not None:
+        price_series = pd.to_numeric(prices, errors="coerce").copy()
+        price_series.index = pd.to_datetime(price_series.index)
+        if price_series.index.tz is not None:
+            price_series.index = price_series.index.tz_localize(None)
+        price_series = price_series.sort_index()
+
+    rows_by_date: dict[pd.Timestamp, dict[str, Any]] = {}
+    prior_calculated_date = None
+    last_snapshot: dict[str, Any] | None = None
+    for ts in ordered:
+        cutoff = pd.Timestamp(ts).date()
+        latest_price = np.nan
+        if price_series is not None:
+            known = price_series.loc[price_series.index <= ts].dropna()
             if not known.empty:
-                price = float(known.iloc[-1])
-        rows.append(sec_fundamental_snapshot(fact_bundle, pd.Timestamp(ts).date(), price))
-    return pd.DataFrame(rows, index=pd.DatetimeIndex(dates, name="Decision date"))
+                latest_price = float(known.iloc[-1])
+        has_new_filing = prior_calculated_date is None or any(
+            prior_calculated_date < filed < cutoff for filed in filing_dates
+        )
+        if last_snapshot is None or has_new_filing:
+            last_snapshot = sec_fundamental_snapshot(fact_bundle, cutoff, latest_price)
+        else:
+            last_snapshot = _reprice_snapshot(last_snapshot, cutoff, latest_price)
+        rows_by_date[pd.Timestamp(ts)] = dict(last_snapshot)
+        prior_calculated_date = cutoff
+
+    out_rows = [rows_by_date[pd.Timestamp(ts)] for ts in requested]
+    return pd.DataFrame(out_rows, index=requested)
