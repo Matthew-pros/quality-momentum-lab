@@ -1033,3 +1033,23 @@ def test_expanding_walk_forward_rejects_overlapping_folds_and_insufficient_histo
             train_months=36, test_months=12, step_months=12, min_train_months=24,
             top_n=2, use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
         )
+
+
+def test_terminal_liquidation_cost_uses_end_nav_and_trades_remaining_exposure():
+    from qlab.strategy import _apply_terminal_liquidation_cost
+
+    curve = pd.DataFrame({
+        "Equity": [1_100.0],
+        "Net return": [0.10],
+        "Transaction cost": [0.0],
+        "Gross turnover": [0.20],
+        "Gross exposure %": [80.0],
+        "Estimated cost (bps of portfolio)": [0.0],
+    }, index=pd.to_datetime(["2025-01-31"]))
+    out = _apply_terminal_liquidation_cost(curve, initial=1_000.0, cost_bps=10.0)
+    expected_cash_cost = 1_100.0 * 0.80 * 10 / 10_000
+    assert out.iloc[0]["Equity"] == pytest.approx(1_100.0 - expected_cash_cost)
+    assert out.iloc[0]["Net return"] == pytest.approx((1_100.0 - expected_cash_cost) / 1_000.0 - 1)
+    assert out.iloc[0]["Terminal liquidation cost"] == pytest.approx(expected_cash_cost / 1_000.0)
+    assert out.iloc[0]["Terminal liquidation turnover"] == pytest.approx(0.80 * 1_100.0 / 1_000.0)
+    assert out.iloc[0]["Gross turnover"] == pytest.approx(0.20 + 0.80 * 1_100.0 / 1_000.0)
