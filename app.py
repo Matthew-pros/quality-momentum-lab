@@ -18,7 +18,7 @@ from qlab.optional_signals import parse_signal_csv, latest_signals, signal_histo
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
 DEFAULT_DEMO_UNIVERSE = "SIM01,SIM02,SIM03,SIM04,SIM05,SIM06,SIM07,SIM08,SIM09,SIM10,SIM11,SIM12"
 BENCHMARKS = ("SPY",)
@@ -338,7 +338,7 @@ if screener.empty:
     st.stop()
 
 # ------------------------------ Main header ------------------------------
-st.markdown('<div class="qlab-eyebrow">Systematic equity research · v2</div>', unsafe_allow_html=True)
+st.markdown('<div class="qlab-eyebrow">Systematic equity research · v2.2</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-title">Quality × Value × Momentum</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-subtitle">Výzkumné prostředí pro výběr akcií, dlouhodobé momentum, fundamentální kvalitu a řízení obratu portfolia. Důraz je na dohledatelných zdrojích, časové správnosti a výsledcích po nákladech — nikoli na falešné přesnosti.</div>', unsafe_allow_html=True)
 latest_price_date = max(frame.index.max() for frame in prices.values())
