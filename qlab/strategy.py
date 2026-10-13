@@ -1002,6 +1002,75 @@ def chronological_period_summary(
     return pd.DataFrame(rows)
 
 
+def industry_exposure_summary(
+    audit: pd.DataFrame,
+    sector_map: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Summarize historical target-weight exposure by the available SIC grouping.
+
+    Uses the target weights saved in the rebalance audit. Unclassified names remain visible
+    rather than being silently assigned to a guessed sector. Since the map is the current
+    SEC SIC mapping, it is a diagnostic, not a historical point-in-time industry series.
+    """
+    columns = [
+        "SIC group", "Average weight %", "Maximum weight %", "Rebalance months invested",
+        "Share of rebalance months %", "Average number of positions",
+    ]
+    if audit is None or audit.empty or "Target weights" not in audit:
+        return pd.DataFrame(columns=columns)
+    sector_map = sector_map or {}
+    rows = []
+    all_groups = set(str(value or "Unclassified") for value in sector_map.values())
+    parsed_periods: list[dict[str, float]] = []
+    for _, record in audit.iterrows():
+        text_weights = str(record.get("Target weights", "") or "").strip()
+        ticker_weights: dict[str, float] = {}
+        if text_weights:
+            for token in text_weights.split(","):
+                if ":" not in token:
+                    continue
+                ticker, raw_weight = token.rsplit(":", 1)
+                try:
+                    weight = float(raw_weight)
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(weight) and weight >= 0:
+                    ticker_weights[ticker.strip().upper()] = weight
+        period_weights: dict[str, float] = {}
+        for ticker, weight in ticker_weights.items():
+            group = str(sector_map.get(ticker, "Unclassified") or "Unclassified")
+            period_weights[group] = period_weights.get(group, 0.0) + weight
+            all_groups.add(group)
+        parsed_periods.append(period_weights)
+    periods = max(1, len(parsed_periods))
+    for group in sorted(all_groups):
+        values = np.array([period.get(group, 0.0) for period in parsed_periods], dtype=float)
+        rows.append({
+            "SIC group": group,
+            "Average weight %": float(values.mean() * 100) if len(values) else 0.0,
+            "Maximum weight %": float(values.max() * 100) if len(values) else 0.0,
+            "Rebalance months invested": int((values > 0).sum()),
+            "Share of rebalance months %": float((values > 0).sum() / periods * 100),
+            "Average number of positions": float(np.mean([
+                sum(
+                    1 for ticker, weight in (
+                        (
+                            token.rsplit(":", 1)[0].strip().upper(),
+                            float(token.rsplit(":", 1)[1]),
+                        )
+                        for token in str(record.get("Target weights", "") or "").split(",")
+                        if ":" in token
+                    )
+                    if weight > 0 and str(sector_map.get(ticker, "Unclassified") or "Unclassified") == group
+                )
+                for _, record in audit.iterrows()
+            ])) if len(parsed_periods) else 0.0,
+        })
+    return pd.DataFrame(rows, columns=columns).sort_values(
+        "Average weight %", ascending=False, kind="mergesort"
+    ).reset_index(drop=True)
+
+
 def calculate_position_sizes(
     screener: pd.DataFrame,
     selected_tickers: list[str],
