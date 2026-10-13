@@ -73,6 +73,13 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
         remaining = qty
         while remaining > 1e-9:
             lot = lots[ticker][0]
+            lot_currency = str(lot.get("Currency", "USD")).upper()
+            if lot_currency != currency.upper():
+                raise ValueError(
+                    f"Currency mismatch for {ticker}: buy lot is {lot_currency}, "
+                    f"but SELL on {txrow['Date'].date()} is {currency.upper()}. "
+                    "Convert basis/proceeds consistently before FIFO matching."
+                )
             matched = min(remaining, lot["Remaining quantity"])
             basis = matched * lot["Unit cost incl. fee"]
             proceeds = matched * price - matched * fee_per_share
