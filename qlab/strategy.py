@@ -915,10 +915,13 @@ def compare_stop_variants(
     not for choosing a winner using the final holdout or as evidence of predictive edge.
     """
     rows = []
+    common_kwargs = dict(backtest_kwargs)
+    if common_kwargs.get("precomputed_indicators") is None:
+        common_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
     for mode in stop_modes:
         row: dict[str, object] = {"Stop mode": mode, "Status": "OK", "Error": ""}
         try:
-            _, metrics, _ = run_monthly_backtest(prices=prices, stop_mode=mode, **backtest_kwargs)
+            _, metrics, _ = run_monthly_backtest(prices=prices, stop_mode=mode, **common_kwargs)
             if metrics is None:
                 row["Status"] = "Insufficient data"
             else:
@@ -1143,6 +1146,9 @@ def train_select_holdout_search(
     if not hysteresis_values or any(not np.isfinite(x) or x < 0 or x > 100 for x in hysteresis_values):
         raise ValueError("Hysteresis candidates must be finite, non-negative values.")
 
+    backtest_kwargs = dict(backtest_kwargs)
+    if backtest_kwargs.get("precomputed_indicators") is None:
+        backtest_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
     candidate_curves: dict[tuple[float, float], pd.DataFrame] = {}
     result_rows: list[dict[str, object]] = []
     split_idx: int | None = None
@@ -1363,6 +1369,9 @@ def expanding_walk_forward(
             f"{13 + train_months + test_months} month-end observations, received {len(monthly)}."
         )
 
+    backtest_kwargs = dict(backtest_kwargs)
+    if backtest_kwargs.get("precomputed_indicators") is None:
+        backtest_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
     base_initial = float(backtest_kwargs.get("initial", 10_000))
     start_idx = 12  # match the 12-month burn-in used by run_monthly_backtest
     fold_candidates: list[dict[str, object]] = []
