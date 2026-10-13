@@ -52,6 +52,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat citlivost CAGR/volatility/Sharpe/drawdown na různé náklady při zachování stejné historie signálů.
 - [x] Přidat 60/20/20 chronologické diagnostické rozdělení Train / Validation / Holdout včetně benchmarku (není to automatizovaný walk-forward optimizer; holdout zůstává nedotčený jen tehdy, pokud se parametry podle něj neupravují).
 - [x] Přidat reprodukovatelný moving-block bootstrap pro orientační intervaly CAGR, Sharpe, max drawdown a konečné hodnoty; intervaly jsou diagnostické, nikoli garance statistického pokrytí.
+- [x] Přidat lokální grid min-score × hystereze, vybrat konfiguraci jen z tréninkového Sharpe a reportovat pozdější holdout pouze pro vítěznou konfiguraci; nejde o rolling walk-forward a opakované ladění podle holdoutu jej znehodnotí.
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
 - [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
 - [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
