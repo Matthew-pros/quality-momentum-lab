@@ -130,33 +130,38 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                     )
                     continue
 
-                if int(year) <= 2025:
+                if int(year) == 2025:
                     long_gross = float(group.loc[group["Holding period > 3 years"].astype(bool), "Gross sale proceeds"].sum())
                     if long_gross > 40_000_000:
                         realized_df.loc[long_enough, "Tax review status"] = (
-                            "Historic-year CZK 40m time-test cap may apply; review proportional calculation and other exempt sales"
+                            "2025 CZK 40m time-test cap may apply; review proportional calculation and other exempt sales"
                         )
                     else:
                         realized_df.loc[long_enough, "Tax review status"] = (
-                            "Potential 3-year time-test exemption; verify historic CZK 40m aggregate cap and eligibility"
+                            "Potential 3-year time-test exemption; verify 2025 CZK 40m aggregate cap and eligibility"
                         )
+                elif int(year) <= 2024:
+                    realized_df.loc[long_enough, "Tax review status"] = (
+                        "Potential 3-year time-test exemption; verify rules applicable to this tax year (no 2025 CZK 40m cap)"
+                    )
                 else:
                     realized_df.loc[long_enough, "Tax review status"] = (
                         "Potential 3-year time-test exemption (CZK 40m securities cap removed from 2026); verify eligibility"
                     )
 
-                # The §38v notice threshold is per single exempt receipt, not the annual sum,
-                # and applies to exempt income in all relevant years. A sale can be split
-                # across several FIFO lots; aggregate the qualifying part by original sale ID.
+                # The §38v notice threshold is per single exempt receipt, not the annual sum.
+                # A sale can be split across FIFO lots, so aggregate the qualifying part by
+                # original sale transaction ID. This is a review proxy, not a legal ruling
+                # on how a transaction should be characterized as an individual receipt.
                 exempt_by_sale = (
                     group.loc[group["Holding period > 3 years"].astype(bool)]
                     .groupby("Sale transaction ID")["Gross sale proceeds"].sum()
                 )
                 report_ids = set(exempt_by_sale[exempt_by_sale > 5_000_000].index)
                 notify_rows = long_enough & realized_df["Sale transaction ID"].isin(report_ids)
-                if int(year) <= 2025:
+                if int(year) == 2025:
                     notice_text = (
-                        "Potential §38v notice: single exempt sale receipt > CZK 5m; also review historic-year CZK 40m time-test cap"
+                        "Potential §38v notice: single exempt sale receipt > CZK 5m; review 2025 CZK 40m time-test cap too"
                     )
                 else:
                     notice_text = (
@@ -167,11 +172,12 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                     "Time test not met and value test exceeded: review taxable income, deductible costs, and applicable-year rules"
                 )
             else:
-                historic_note = (
-                    "; historic CZK 40m time-test cap may apply"
-                    if int(year) <= 2025
-                    else "; CZK 40m securities cap removed from 2026"
-                )
+                if int(year) == 2025:
+                    historic_note = "; 2025 CZK 40m time-test cap may apply"
+                elif int(year) <= 2024:
+                    historic_note = "; no 2025 CZK 40m cap for this tax year, subject to rules then applicable"
+                else:
+                    historic_note = "; CZK 40m securities cap removed from 2026"
                 notice_note = "; convert each potentially exempt receipt to CZK and check individual CZK 5m notice threshold"
                 realized_df.loc[long_enough, "Tax review status"] = (
                     "Potential 3-year time-test exemption; convert proceeds to CZK and review full portfolio"
