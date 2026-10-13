@@ -299,6 +299,27 @@ prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in pri
 if not prices:
     st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
     st.stop()
+if universe_history is not None:
+    membership_tickers = set(tickers_in_membership_file(universe_history))
+    missing_price_history = sorted(membership_tickers - set(prices))
+    if missing_price_history:
+        st.error(
+            "Historické složení univerza obsahuje tickery bez cenové historie v CSV: "
+            + ", ".join(missing_price_history[:30])
+            + (f" … a dalších {len(missing_price_history) - 30}" if len(missing_price_history) > 30 else "")
+            + ". Pro point-in-time test je nutné dodat OHLCV i pro tehdejší tituly včetně těch později delistovaných."
+        )
+        st.stop()
+
+price_data_signature = hashlib.sha256()
+if not is_demo_mode and price_csv_upload is not None:
+    price_data_signature.update(price_csv_upload.getvalue())
+else:
+    for ticker in sorted(prices):
+        frame = prices[ticker]
+        price_data_signature.update(ticker.encode("utf-8"))
+        price_data_signature.update(pd.util.hash_pandas_object(frame, index=True).to_numpy(dtype="uint64").tobytes())
+price_data_signature = price_data_signature.hexdigest()
 
 # Preserve source provenance in every downloadable data-quality report.
 price_source_label = "Deterministic synthetic DEMO" if is_demo_mode else "User-supplied OHLCV CSV"
@@ -353,10 +374,29 @@ else:
     else:
         st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
 
-screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
-if screener.empty:
+all_screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
+if all_screener.empty:
     st.error("Z cenových dat se nepodařilo vytvořit screener.")
     st.stop()
+sector_map_all = all_screener.set_index("Ticker")["SIC group"].fillna("Unclassified").astype(str).to_dict() if "SIC group" in all_screener else {}
+screener = all_screener
+if universe_history is not None:
+    last_observation_date = max(pd.Timestamp(frame.index.max()) for frame in prices.values() if not frame.empty)
+    if last_observation_date.tzinfo is not None:
+        last_observation_date = last_observation_date.tz_localize(None)
+    current_members = universe_members_asof(universe_history, last_observation_date)
+    current_screener = all_screener.loc[all_screener["Ticker"].isin(current_members or set())].copy()
+    if not current_screener.empty:
+        screener = current_screener
+        st.info(
+            f"Screener zobrazuje {len(screener)} titulů, které byly v univerzu k poslednímu datu cen {last_observation_date.date()}. "
+            "Historický backtest používá členství podle data každého signálu. Historické SIC klasifikace zůstávají nedostupné."
+        )
+    else:
+        st.warning(
+            f"Historický membership CSV nemá žádné aktivní členy k poslednímu datu cen ({last_observation_date.date()}). "
+            "Screener zůstává jako historický přehled všech nahraných symbolů; nepoužívej ho jako seznam aktuálně obchodovatelných titulů."
+        )
 
 # ------------------------------ Main header ------------------------------
 st.markdown(f'<div class="qlab-eyebrow">Systematic equity research · build {APP_VERSION}</div>', unsafe_allow_html=True)
@@ -477,7 +517,8 @@ with tab_strategy:
         value=default_pit, disabled=sec_coverage < 0.40,
         help="Historický signál používá jen fakta zveřejněná do dne rozhodnutí. Zůstává survivorship bias, protože univerzum je současný seznam.")
     st.caption("Signálové parametry jsou vlevo. Stop-loss 50denní low / 3×ATR je v kalkulátoru pozic; tento měsíční backtest nepředstírá intradenní exekuci stopů.")
-    sector_map = screener.set_index("Ticker")["SIC group"].fillna("Unclassified").astype(str).to_dict() if "SIC group" in screener else {}
+    # Current SIC metadata is shown for all uploaded securities; it is not point-in-time sector history.
+    sector_map = sector_map_all
     classified_sector_count = sum(1 for ticker in universe if sector_map.get(ticker, "Unclassified") not in {"Unclassified", "Unknown", ""})
     if max_sector_positions > 0 and classified_sector_count < len(universe):
         st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
