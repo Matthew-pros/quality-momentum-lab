@@ -65,8 +65,9 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat Inverse ATR vážení do backtestu, váhový strop a report skutečné expozice včetně hotovosti.
 - [x] Přidat hysterézi a omezený počet náhradních pozic při měsíčním rebalancování.
 - [x] Přidat FIFO evidence nákupů/prodejů s rozdělením poplatků, realizovaným výsledkem a otevřenými loty.
-- [x] Přidat předběžné daňové kontrolní štítky pro české osvobození (CZK roční hrubý hodnotový test a více než tříletý časový test) podle oficiálního shrnutí pro rok 2026.
-- [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje za celý rok, corporate actions, dědictví a výjimky (např. obchodní majetek); nesmí to být považováno za finální výpočet daně.
+- [x] Přidat předběžné daňové kontrolní štítky pro české osvobození: roční hodnotový test do 100 000 Kč; 40milionový strop časového testu pouze pro rok 2025; odstranění tohoto stropu pro cenné papíry od roku 2026; kontrola potenciální oznamovací hranice 5 mil. Kč po zdrojovém prodejním řádku.
+- [x] FIFO odmítá párování nákupního lotu a prodeje v různých měnách bez FX konverze a souhrnná KPI nesčítají P/L v různých měnách.
+- [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje a ostatní osvobozené příjmy za rok včetně kryptoaktiv (zejména pro rok 2025), corporate actions, dědictví a výjimky (např. obchodní majetek); současný modul je pouze orientační a není finálním výpočtem daně.
 - [x] Přidat omezení počtu pozic podle současné hrubé SEC SIC skupiny, report skupinové expozice, počty vstupů/výstupů, průměrnou dobu držení a nákladové komponenty.
 - [x] Přidat portfolio-level souhrnný risk budget do ATR sizing kalkulátoru a škálovat celé kusy pod cap.
 - [ ] Získat point-in-time historické klasifikace a nahradit hrubé SIC skupiny srovnatelnou historickou sektorovou klasifikací; současné SIC metadata nejsou GICS/ICB a mohou se měnit.
