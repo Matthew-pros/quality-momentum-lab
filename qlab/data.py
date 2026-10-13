@@ -727,6 +727,7 @@ def sec_fundamental_snapshot(
     fact_bundle: dict[str, Any],
     as_of: str | date,
     latest_price: float = np.nan,
+    price_currency: str | None = None,
 ) -> dict[str, Any]:
     """Compute reported fundamental ratios using only records filed before as_of."""
     company_facts = fact_bundle["payload"]
@@ -743,31 +744,56 @@ def sec_fundamental_snapshot(
     cfo = _annual_series(company_facts, cfo_tags, cutoff)
     capex = _annual_series(company_facts, capex_tags, cutoff)
 
+    revenue_unit = str(revenue.attrs.get("unit", "") or "")
+    income_unit = str(income.attrs.get("unit", "") or "")
+    cfo_unit = str(cfo.attrs.get("unit", "") or "")
+    capex_unit = str(capex.attrs.get("unit", "") or "")
     revenue_last = float(revenue.iloc[-1]) if len(revenue) else np.nan
     revenue_prev = float(revenue.iloc[-2]) if len(revenue) > 1 else np.nan
     income_last = float(income.iloc[-1]) if len(income) else np.nan
     income_prev = float(income.iloc[-2]) if len(income) > 1 else np.nan
     cfo_last = float(cfo.iloc[-1]) if len(cfo) else np.nan
     same_end_capex = capex.get(cfo.index[-1], np.nan) if len(cfo) else np.nan
-    fcf = cfo_last - abs(float(same_end_capex)) if pd.notna(cfo_last) and pd.notna(same_end_capex) else np.nan
-
-    equity, equity_end, equity_filed = _latest_instant(company_facts, [
-        "StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
-    ], cutoff)
-    debt_noncurrent, debt_end, debt_filed = _latest_instant(company_facts, [
-        "LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent", "LongTermDebt"
-    ], cutoff)
-    debt_current, _, _ = _latest_instant(company_facts, [
-        "LongTermDebtCurrent", "LongTermDebtAndFinanceLeaseObligationsCurrent", "ShortTermBorrowings"
-    ], cutoff)
-    debt = (
-        max(0.0, debt_noncurrent) + max(0.0, debt_current)
-        if pd.notna(debt_noncurrent) or pd.notna(debt_current) else np.nan
+    fcf_unit = cfo_unit if cfo_unit and cfo_unit == capex_unit else ""
+    fcf = (
+        cfo_last - abs(float(same_end_capex))
+        if pd.notna(cfo_last) and pd.notna(same_end_capex) and fcf_unit
+        else np.nan
     )
+
+    equity_tags = [
+        "StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+    ]
+    debt_noncurrent_tags = [
+        "LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent", "LongTermDebt"
+    ]
+    debt_current_tags = [
+        "LongTermDebtCurrent", "LongTermDebtAndFinanceLeaseObligationsCurrent", "ShortTermBorrowings"
+    ]
+    equity, equity_end, equity_filed = _latest_instant(company_facts, equity_tags, cutoff)
+    debt_noncurrent, debt_end, debt_filed = _latest_instant(company_facts, debt_noncurrent_tags, cutoff)
+    debt_current, _, _ = _latest_instant(company_facts, debt_current_tags, cutoff)
+    equity_unit = _latest_instant_unit(company_facts, equity_tags, cutoff)
+    debt_noncurrent_unit = _latest_instant_unit(company_facts, debt_noncurrent_tags, cutoff)
+    debt_current_unit = _latest_instant_unit(company_facts, debt_current_tags, cutoff)
+    debt_unit = debt_noncurrent_unit if pd.notna(debt_noncurrent) else debt_current_unit
+    if pd.notna(debt_noncurrent) and pd.notna(debt_current) and debt_noncurrent_unit != debt_current_unit:
+        debt = np.nan
+        debt_unit = ""
+    else:
+        debt = (
+            max(0.0, debt_noncurrent) + max(0.0, debt_current)
+            if pd.notna(debt_noncurrent) or pd.notna(debt_current) else np.nan
+        )
     shares, shares_end, shares_filed = _latest_instant(company_facts, ["EntityCommonStockSharesOutstanding"], cutoff)
+    price_currency_code = str(price_currency or "").strip().upper()
+    price_financial_unit_matches = bool(
+        price_currency_code and income_unit and price_currency_code == income_unit
+    )
     market_cap = (
         float(latest_price) * shares
-        if pd.notna(latest_price) and pd.notna(shares) and latest_price > 0 and shares > 0
+        if price_financial_unit_matches and pd.notna(latest_price) and pd.notna(shares)
+        and latest_price > 0 and shares > 0
         else np.nan
     )
 
@@ -778,12 +804,36 @@ def sec_fundamental_snapshot(
 
     revenue_growth = growth(revenue_last, revenue_prev)
     earnings_growth = growth(income_last, income_prev)
-    roe = income_last / equity * 100 if pd.notna(income_last) and pd.notna(equity) and equity > 0 else np.nan
-    profit_margin = income_last / revenue_last * 100 if pd.notna(income_last) and pd.notna(revenue_last) and revenue_last > 0 else np.nan
-    fcf_margin = fcf / revenue_last * 100 if pd.notna(fcf) and pd.notna(revenue_last) and revenue_last > 0 else np.nan
-    debt_equity = debt / equity * 100 if pd.notna(debt) and pd.notna(equity) and equity > 0 else np.nan
-    pe = market_cap / income_last if pd.notna(market_cap) and pd.notna(income_last) and income_last > 0 else np.nan
-    fcf_yield = fcf / market_cap * 100 if pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0 else np.nan
+    roe = (
+        income_last / equity * 100
+        if income_unit and income_unit == equity_unit and pd.notna(income_last) and pd.notna(equity) and equity > 0
+        else np.nan
+    )
+    profit_margin = (
+        income_last / revenue_last * 100
+        if income_unit and income_unit == revenue_unit and pd.notna(income_last) and pd.notna(revenue_last) and revenue_last > 0
+        else np.nan
+    )
+    fcf_margin = (
+        fcf / revenue_last * 100
+        if fcf_unit and fcf_unit == revenue_unit and pd.notna(fcf) and pd.notna(revenue_last) and revenue_last > 0
+        else np.nan
+    )
+    debt_equity = (
+        debt / equity * 100
+        if debt_unit and debt_unit == equity_unit and pd.notna(debt) and pd.notna(equity) and equity > 0
+        else np.nan
+    )
+    pe = (
+        market_cap / income_last
+        if price_financial_unit_matches and pd.notna(market_cap) and pd.notna(income_last) and income_last > 0
+        else np.nan
+    )
+    fcf_yield = (
+        fcf / market_cap * 100
+        if price_currency_code and price_currency_code == fcf_unit and pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0
+        else np.nan
+    )
     latest_period = revenue.index[-1].date().isoformat() if len(revenue) else ""
     revenue_filed = _latest_annual_with_filing(revenue, company_facts, revenue_tags, cutoff)[2]
     income_filed = _latest_annual_with_filing(income, company_facts, income_tags, cutoff)[2]
@@ -802,15 +852,22 @@ def sec_fundamental_snapshot(
         "SEC SIC": sic_code, "SEC SIC Description": sic_description, "SIC group": sic_category,
         "Source": "SEC EDGAR Company Facts", "As of": cutoff.isoformat(),
         "Financial period": latest_period, "Latest filing date": latest_filed,
-        "Revenue": revenue_last, "Revenue growth %": revenue_growth,
-        "Net income": income_last, "Earnings growth %": earnings_growth,
+        "Revenue": revenue_last, "Revenue unit": revenue_unit, "Revenue growth %": revenue_growth,
+        "Net income": income_last, "Net income unit": income_unit, "Earnings growth %": earnings_growth,
         "ROE %": roe, "Profit margin %": profit_margin,
-        "CFO": cfo_last, "FCF": fcf, "FCF margin %": fcf_margin,
-        "Debt": debt, "Equity": equity, "Debt/Equity %": debt_equity,
+        "CFO": cfo_last, "CFO unit": cfo_unit, "Capex unit": capex_unit,
+        "FCF": fcf, "FCF unit": fcf_unit, "FCF margin %": fcf_margin,
+        "Debt": debt, "Debt unit": debt_unit, "Equity": equity, "Equity unit": equity_unit, "Debt/Equity %": debt_equity,
         "Shares outstanding (reported)": shares, "Estimated market cap": market_cap,
         "P/E (annual EPS proxy)": pe, "FCF yield %": fcf_yield,
+        "Price currency": price_currency_code or "UNKNOWN",
+        "Price / net-income unit match": price_financial_unit_matches,
         "Fundamental coverage %": coverage_pct, "Fundamental status": status,
-        "Data note": "Current price × last reported shares is only an estimate; annual ratios use annual filing facts available before the as-of date.",
+        "Data note": (
+            "Annual values use one selected XBRL unit per metric. Ratios are suppressed where financial units differ. "
+            "Market cap/P-E/FCF yield require price-currency confirmation; this app does not convert currencies. "
+            "Current price × last reported shares remains an estimate; facts are filtered by filing date."
+        ),
     }
 
 
