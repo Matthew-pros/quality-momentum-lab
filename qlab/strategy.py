@@ -721,6 +721,7 @@ def run_monthly_backtest(
             metrics["Benchmark CAGR"] = float((1 + aligned["Benchmark"]).prod() ** (12 / len(aligned)) - 1)
             metrics["Benchmark period months"] = len(aligned)
             metrics["Strategy CAGR aligned"] = float((1 + aligned["Strategy"]).prod() ** (12 / len(aligned)) - 1)
+            curve["Benchmark return"] = bench.reindex(curve.index)
             curve["Benchmark equity"] = float(initial) * (1 + bench.reindex(curve.index).fillna(0)).cumprod()
     return curve, metrics, pd.DataFrame(audit)
 
