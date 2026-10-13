@@ -82,6 +82,16 @@ def test_streamlit_backtest_and_train_holdout_buttons_run_offline(monkeypatch):
     assert result["metrics"]["Holdout months"] >= 6
     assert result["candidates"]["Selected by train"].sum() == 1
 
+    # The deterministic smoke dataset is deliberately too short for 24-month train
+    # + 6-month OOS folds, so the UI should surface a clear history warning rather
+    # than crash or silently shorten the evaluation window.
+    walk_forward_button = next(button for button in app.button if button.label == "Spustit expanding walk-forward")
+    walk_forward_button.click().run()
+    assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
+    walk_forward = app.session_state["expanding_walk_forward"]
+    assert walk_forward.get("error") is not None
+    assert "Insufficient monthly history" in walk_forward["error"]
+
 
 def test_streamlit_dcf_form_calculates_and_renders_sensitivity_offline(monkeypatch):
     monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
