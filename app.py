@@ -220,9 +220,11 @@ with st.sidebar:
     hysteresis = st.slider("Hystereze skóre", 0, 25, 7, help="Nová akcie musí být lepší o tento počet bodů, aby vytlačila stávající pozici.")
     max_replacements = st.slider("Max. výměn za rebalancování", 0, 15, 2)
     max_sector_positions = st.slider(
-        "Max. pozic na SIC skupinu", 0, 8, 2,
-        help="0 = vypnuto. Jde o hrubé SEC SIC industry group, nikoli GICS sektor. Chybějící klasifikace se nekontroluje; historické změny klasifikace nejsou k dispozici."
+        "Max. pozic na SIC skupinu", 0, 8, 0,
+        help="0 = vypnuto (doporučeno pro historické testy). Volitelné omezení používá současnou SEC SIC industry group, nikoli point-in-time GICS/ICB klasifikaci, a proto může zkreslit historické rozhodování."
     )
+    if max_sector_positions > 0:
+        st.sidebar.warning("SIC limit používá dnešní klasifikaci emitenta v historickém testu. Pro čistší OOS výsledky jej nech vypnutý, pokud nemáš point-in-time historii klasifikace.")
     breakout_filter = st.selectbox("Vstupní průraz", ["None", "20-day", "55-day"], index=0)
     weighting_method = st.selectbox("Váhy pozic v backtestu", ["Equal weight", "Inverse ATR"], index=0,
         help="Inverse ATR váží nižší volatilitu vyšší vahou; limit pozice může ponechat část portfolia v hotovosti.")
