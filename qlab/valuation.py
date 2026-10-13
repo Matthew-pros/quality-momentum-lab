@@ -23,8 +23,10 @@ def calculate_fcfe_dcf(
         raise ValueError("DCF inputs must be finite numbers.")
     if base_fcf <= 0:
         raise ValueError("Base free cash flow must be positive for this simplified DCF scenario.")
-    if years < 1 or years > 20:
-        raise ValueError("Forecast horizon must be from 1 to 20 years.")
+    if annual_growth_rate <= -1:
+        raise ValueError("Annual FCF growth must be greater than -100% so forecast cash flow stays non-negative.")
+    if not isinstance(years, (int, np.integer)) or isinstance(years, bool) or years < 1 or years > 20:
+        raise ValueError("Forecast horizon must be an integer from 1 to 20 years.")
     if cost_of_equity <= terminal_growth_rate:
         raise ValueError("Cost of equity must be greater than terminal growth.")
     if cost_of_equity <= -1 or terminal_growth_rate <= -1:
