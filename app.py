@@ -197,6 +197,8 @@ with st.sidebar:
     st.divider()
     capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
     risk_budget_pct = st.slider("Riziko na pozici (% kapitálu)", 0.1, 2.0, 0.5, 0.1)
+    max_total_risk_pct = st.slider("Max. souhrnné počáteční riziko portfolia (%)", 0.5, 10.0, 3.0, 0.5,
+        help="Celkový modelový risk do ATR stopů napříč vybranými pozicemi. Po zaokrouhlení počtu akcií se rozpočet nemá překročit.")
     stop_atr = st.slider("Stop distance (× ATR20)", 1.0, 5.0, 3.0, 0.5)
     max_position_pct = st.slider("Max. váha pozice (%)", 5, 40, 20, 1)
     max_exposure_pct = st.slider("Max. celková expozice (%)", 25, 100, 95, 5)
@@ -642,14 +644,16 @@ with tab_portfolio:
     suggested = candidates.loc[candidates["Trend OK"],"Ticker"].head(min(top_n,5)).tolist()
     picked = st.multiselect("Tituly ke kalkulaci",screener["Ticker"].tolist(),default=suggested)
     sizes = calculate_position_sizes(screener,picked,capital,risk_budget_pct=risk_budget_pct,
-        stop_atr_multiple=stop_atr,max_position_pct=max_position_pct,max_total_exposure_pct=max_exposure_pct)
+        stop_atr_multiple=stop_atr,max_position_pct=max_position_pct,max_total_exposure_pct=max_exposure_pct,
+        max_total_risk_pct=max_total_risk_pct)
     if sizes.empty:
         st.info("Vyber akcie s dostupnou cenou a ATR(20).")
     else:
         a,b,c = st.columns(3)
         a.metric("Modelová alokace",f"${sizes['Position value'].sum():,.0f}")
         b.metric("Expozice kapitálu",f"{sizes['Weight %'].sum():.1f}%")
-        c.metric("Odhadované počáteční riziko",f"${sizes['Initial risk budget'].sum():,.0f}")
+        risk_used = float(sizes["Initial risk budget"].sum())
+        c.metric("Počáteční riziko portfolia",f"${risk_used:,.0f}",f"{risk_used / capital * 100:.2f}% z kapitálu (limit {max_total_risk_pct:.1f}%)")
         st.dataframe(sizes,width="stretch",hide_index=True,column_config={
             "Weight %":st.column_config.NumberColumn(format="%.2f%%"),"Price":st.column_config.NumberColumn(format="%.2f"),
             "ATR20":st.column_config.NumberColumn(format="%.2f"),"Provisional stop":st.column_config.NumberColumn(format="%.2f"),
