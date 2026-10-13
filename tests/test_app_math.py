@@ -354,12 +354,14 @@ def test_market_quality_report_flags_stale_invalid_and_extreme_prices():
         "Low": [9.0, 9.0, 0.0], "Close": [10.0, 19.0, 0.0],
         "Adj Close": [10.0, 19.0, 0.0],
     }, index=index)
-    _, report = assess_price_quality({"AAA": frame}, now="2026-10-13")
+    cleaned, report = assess_price_quality({"AAA": frame}, now="2026-10-13")
     row = report.iloc[0]
     assert row["Quality"] == "REVIEW"
     assert row["Calendar days stale"] > 7
     assert row["Invalid price rows"] == 1
     assert row["Max abs daily return %"] >= 30
+    assert np.isnan(cleaned["AAA"].loc[index[-1], "Close"])
+    assert row["Rows"] == 2
 
 
 def test_sec_history_reprices_between_filings_without_changing_reported_fundamentals():
