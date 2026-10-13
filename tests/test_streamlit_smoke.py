@@ -102,7 +102,7 @@ def test_streamlit_dcf_form_calculates_and_renders_sensitivity_offline(monkeypat
     app.run()
     assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
 
-    fcf = next(item for item in app.number_input if item.label == "Normalizované roční FCF (v reportovací měně)")
+    fcf = next(item for item in app.number_input if item.label.startswith("Normalizované roční FCF ("))
     shares = next(item for item in app.number_input if item.label == "Počet akcií v oběhu (kusy)")
     confirmation = next(item for item in app.checkbox if item.label.startswith("Ověřil/a jsem"))
     fcf.set_value(3_000_000_000)
@@ -112,6 +112,6 @@ def test_streamlit_dcf_form_calculates_and_renders_sensitivity_offline(monkeypat
 
     assert not app.exception, "\\n".join(str(e.value) for e in app.exception)
     rendered_labels = {str(item.label) for item in app.metric}
-    assert "Modelová hodnota / akcii" in rendered_labels
+    assert any(label.startswith("Modelová hodnota / akcii (") for label in rendered_labels)
     assert "Terminální hodnota / PV" in rendered_labels
     assert any("Citlivost hodnoty na růst FCF a diskontní sazbu" in str(item.value) for item in app.markdown)
