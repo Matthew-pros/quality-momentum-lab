@@ -596,20 +596,20 @@ with tab_strategy:
     if max_sector_positions > 0 and classified_sector_count < len(universe):
         st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
     signature = (tuple(universe), period, price_data_signature, universe_history_signature,
-        top_n, min_adx, min_score, hysteresis, max_replacements,
+        currency_ok, currency_confirm_usd, tuple(currency_non_usd), top_n, min_adx, min_score, hysteresis, max_replacements,
         max_sector_positions, commission_bps, half_spread_bps, slippage_bps, cost_bps, breakout_filter,
         weighting_method, backtest_max_weight, stop_mode, stop_atr,
         use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
-    run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
-    compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants")
+    run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest", disabled=not currency_ok)
+    compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants", disabled=not currency_ok)
     train_holdout_button = st.button(
         "Vybrat parametry na tréninku a ověřit holdout",
-        key="train_select_holdout_button",
+        key="train_select_holdout_button", disabled=not currency_ok,
         help="Porovná 9 variant min-score × hystereze pouze na prvních 60 % výnosové historie; na posledních 40 % ukáže pouze výsledky vítěze zvoleného tréninkovým Sharpe. Nejde o rolling walk-forward."
     )
     walk_forward_button = st.button(
         "Spustit expanding walk-forward",
-        key="expanding_walk_forward_button",
+        key="expanding_walk_forward_button", disabled=not currency_ok,
         help="V každém foldu vybere min-score a hysterezi jen z minulých dat, potom otestuje vítěze na neprolínajícím se šestíměsíčním OOS okně. Portfolio se na začátku každého OOS okna resetuje na hotovost a na konci se modelově zlikviduje."
     )
     saved = st.session_state.get("backtest_result")
