@@ -1356,3 +1356,24 @@ def test_sec_estimated_multiples_require_explicit_matching_quote_currency():
     assert usd_quote["P/E (annual EPS proxy)"] == pytest.approx(2_000 / 15)
     assert pd.isna(eur_quote["Estimated market cap"])
     assert pd.isna(eur_quote["P/E (annual EPS proxy)"])
+
+
+def test_annual_series_selects_one_unit_instead_of_mixing_parallel_currency_observations():
+    from qlab.data import _annual_series
+
+    facts = {"facts":{"us-gaap":{
+        "Revenues":{"units":{
+            "USD":[
+                {"start":"2021-01-01","end":"2021-12-31","val":100,"filed":"2022-02-15","form":"10-K"},
+                {"start":"2022-01-01","end":"2022-12-31","val":150,"filed":"2023-02-15","form":"10-K"},
+            ],
+            "EUR":[
+                {"start":"2021-01-01","end":"2021-12-31","val":900,"filed":"2022-02-15","form":"10-K"},
+                {"start":"2022-01-01","end":"2022-12-31","val":1200,"filed":"2023-02-15","form":"10-K"},
+            ],
+        }}
+    }}}
+    result = _annual_series(facts, ["Revenues"], "2024-06-30")
+    assert result.attrs["unit"] == "USD"
+    assert result.to_list() == [100.0, 150.0]
+    assert result.iloc[-1] != 1200.0
