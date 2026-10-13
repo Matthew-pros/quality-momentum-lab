@@ -816,6 +816,54 @@ with tab_strategy:
             st.download_button("Stáhnout srovnání stop variant CSV", variant_table.to_csv(index=False).encode("utf-8"), "stop_variant_comparison.csv", "text/csv")
         st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Cost model rozlišuje komisi, polovinu spreadu a skluz, ale neobsahuje fixní poplatky, market impact, FX ani daňový model.")
 
+    wf_saved = st.session_state.get("expanding_walk_forward")
+    if wf_saved and wf_saved.get("signature") == signature:
+        st.divider()
+        st.subheader("Expanding walk-forward · opakované out-of-sample foldy")
+        st.caption("V každém foldu se min-score × hystereze vyberou pouze podle předchozí historie (Sharpe, případně CAGR). Následujících šest měsíců tvoří test. Každý fold začíná s hotovostí, platí náklady na vstup/rebalancování a na konci se zbylé pozice modelově zlikvidují. Foldy se nepřekrývají.")
+        if wf_saved.get("error"):
+            st.warning("Walk-forward nebyl dokončen: " + wf_saved["error"])
+        else:
+            wf_metrics = wf_saved["metrics"]
+            wa, wb, wc, wd = st.columns(4)
+            wa.metric("Agregovaný OOS CAGR", f"{wf_metrics['OOS CAGR']:.1%}")
+            wb.metric("Agregovaný OOS Sharpe", "—" if not np.isfinite(wf_metrics["OOS Sharpe (rf=0)"]) else f"{wf_metrics['OOS Sharpe (rf=0)']:.2f}")
+            wc.metric("OOS max. drawdown", f"{wf_metrics['OOS max drawdown']:.1%}")
+            wd.metric("Nezávislé foldy / měsíce", f"{int(wf_metrics['OOS folds'])} / {int(wf_metrics['OOS months'])}")
+            we, wf, wg = st.columns(3)
+            we.metric("OOS konečná hodnota", "$" + format(wf_metrics["OOS final equity"], ",.0f"))
+            wf.metric("OOS obrat / měsíc", f"{wf_metrics['OOS average turnover %']:.1f}%")
+            if "OOS benchmark CAGR" in wf_metrics:
+                wg.metric(f"OOS benchmark {benchmark_ticker} CAGR", f"{wf_metrics['OOS benchmark CAGR']:.1%}")
+            wf_curve = wf_saved["curve"]
+            fig_wf = go.Figure()
+            fig_wf.add_trace(go.Scatter(x=wf_curve.index, y=wf_curve["Equity"], name="Expanding walk-forward OOS", line=dict(width=2.4, color="#72e0c1")))
+            if "Benchmark equity" in wf_curve:
+                fig_wf.add_trace(go.Scatter(x=wf_curve.index, y=wf_curve["Benchmark equity"], name=f"Benchmark {benchmark_ticker}", line=dict(width=1.7, color="#f6bd60")))
+            fig_wf.update_layout(template="plotly_dark", title="Agregovaná OOS křivka po poplatcích a závěrečné likvidaci", height=360,
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified")
+            st.plotly_chart(fig_wf, width="stretch")
+            st.markdown("#### Výsledky jednotlivých walk-forward foldů")
+            st.dataframe(wf_saved["folds"], width="stretch", hide_index=True, column_config={
+                "OOS CAGR": st.column_config.NumberColumn(format="percent"),
+                "OOS max drawdown": st.column_config.NumberColumn(format="percent"),
+                "OOS turnover %": st.column_config.NumberColumn(format="percent"),
+                "OOS benchmark CAGR": st.column_config.NumberColumn(format="percent"),
+                "Train CAGR": st.column_config.NumberColumn(format="percent"),
+            })
+            st.download_button("Stáhnout walk-forward foldy CSV", wf_saved["folds"].to_csv(index=False).encode("utf-8"), "expanding_walk_forward_folds.csv", "text/csv")
+            st.markdown("#### Kandidáti a výběr pouze podle tréninku")
+            st.caption("Tabulka nezobrazuje OOS metriky nevybraných konfigurací, aby neumožňovala jejich dodatečné ladění podle testovacího období.")
+            st.dataframe(wf_saved["candidates"], width="stretch", hide_index=True, column_config={
+                "Train CAGR": st.column_config.NumberColumn(format="percent"),
+                "Train Sharpe": st.column_config.NumberColumn(format="%.2f"),
+                "Train max drawdown": st.column_config.NumberColumn(format="percent"),
+                "Train turnover %": st.column_config.NumberColumn(format="%.1f%%"),
+            })
+            st.download_button("Stáhnout walk-forward kandidáty CSV", wf_saved["candidates"].to_csv(index=False).encode("utf-8"), "expanding_walk_forward_candidates.csv", "text/csv")
+            st.download_button("Stáhnout OOS walk-forward equity CSV", wf_curve.to_csv().encode("utf-8"), "expanding_walk_forward_oos_curve.csv", "text/csv")
+            st.warning("Ani expanding walk-forward neodstraňuje survivorship bias současného tickerového seznamu, chyby poskytovatele nebo nepřesnost OHLC exekuce. Používej jej jako kontrolu stability, ne jako důkaz budoucího výnosu.")
+
 with tab_valuation:
     st.subheader("DCF / scénářová hodnota akcie")
     if is_demo_mode:
