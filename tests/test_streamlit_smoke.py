@@ -44,7 +44,7 @@ def _fake_market_data(tickers, period="10y"):
 
 def test_streamlit_home_and_tabs_render_without_live_network_calls(monkeypatch):
     monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
-    monkeypatch.setattr(qlab.data, "download_market_data", _fake_market_data)
+    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
     st.cache_data.clear()
 
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=40)
