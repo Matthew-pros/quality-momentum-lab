@@ -407,3 +407,48 @@ def test_cost_sensitivity_keeps_signals_fixed_and_higher_cost_lowers_terminal_eq
     assert table.loc[table["Cost (bps)"] == 0, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0]
     assert table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 50, "Final equity"].iloc[0]
     assert table["Average monthly turnover %"].nunique() == 1
+
+
+def test_daily_atr_trailing_stop_uses_gap_open_and_returns_exit_reason():
+    from qlab.strategy import calculate_indicators, _simulate_position_month
+
+    index = pd.bdate_range("2024-01-01", periods=360)
+    close = pd.Series(50.0 + np.arange(len(index)) * 0.20, index=index)
+    frame = pd.DataFrame({
+        "Open": close - 0.10,
+        "High": close + 1.0,
+        "Low": close - 1.0,
+        "Close": close,
+        "Adj Close": close,
+        "Volume": 500_000,
+    }, index=index)
+    signal_date = index[320]
+    stop_date = index[321]
+    # Simulate an overnight gap below the trailing stop on the first session after signal.
+    frame.loc[stop_date, ["Open", "High", "Low", "Close", "Adj Close"]] = [90.0, 92.0, 88.0, 91.0, 91.0]
+    indicators = calculate_indicators(frame)
+
+    ret, reason, exit_date = _simulate_position_month(
+        frame, indicators, signal_date, index[340],
+        stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
+    )
+    assert ret < 0
+    assert reason == "ATR trailing stop"
+    assert exit_date == stop_date.date().isoformat()
+    # Gap-aware implementation must use the open (90), not a more optimistic stop level.
+    entry_adjusted = frame.loc[signal_date, "Adj Close"]
+    assert ret == pytest.approx(90.0 / entry_adjusted - 1)
+
+
+def test_monthly_backtest_supports_daily_stop_mode_and_audit_columns():
+    from qlab.strategy import run_monthly_backtest
+
+    curve, metrics, audit = run_monthly_backtest(
+        synthetic_prices(1600), top_n=2, cost_bps=10, initial=10_000,
+        min_adx=0, min_score=0, hysteresis=7, max_replacements=1,
+        use_fundamentals=False, stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
+    )
+    assert curve is not None and metrics is not None and audit is not None
+    assert "Stops triggered" in curve.columns
+    assert "Stop mode" in audit.columns
+    assert "Ticker returns" in audit.columns
