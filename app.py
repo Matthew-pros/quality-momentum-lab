@@ -674,6 +674,66 @@ with tab_strategy:
             st.download_button("Stáhnout bootstrap intervaly CSV", uncertainty.to_csv(index=False).encode("utf-8"), "bootstrap_uncertainty.csv", "text/csv")
         except Exception as exc:
             st.warning(f"Bootstrap nejistoty nebyl vypočten: {type(exc).__name__}: {exc}")
+        trained = st.session_state.get("train_select_holdout")
+        if trained and trained.get("signature") == signature:
+            st.markdown("#### Parametry zvolené na tréninkové části · holdout vítězné konfigurace")
+            if trained.get("error"):
+                st.error("Train/holdout test nebyl dokončen: " + trained["error"])
+            else:
+                chosen = trained["chosen"]
+                hm = trained["metrics"]
+                st.caption(
+                    f"Výběr pouze na train: min-score {chosen['min_score']:.0f}, "
+                    f"hystereze {chosen['hysteresis']:.0f}, cíl {chosen['training_objective']} = "
+                    f"{chosen['train_score']:.2f}; trénink {chosen['train_months']:.0f} měsíců. "
+                    "Holdout výsledky ostatních kandidátů záměrně nejsou v tabulce."
+                )
+                oa, ob, oc, od = st.columns(4)
+                oa.metric("Holdout CAGR", f"{hm['Holdout CAGR']:.1%}")
+                ob.metric("Holdout Sharpe", "—" if not np.isfinite(hm["Holdout Sharpe (rf=0)"]) else f"{hm['Holdout Sharpe (rf=0)']:.2f}")
+                oc.metric("Holdout max. drawdown", f"{hm['Holdout max drawdown']:.1%}")
+                od.metric("Holdout měsíce", str(int(hm["Holdout months"])))
+                oe, of, og = st.columns(3)
+                oe.metric("Holdout konečná hodnota", "$" + format(hm["Holdout final equity"], ",.0f"))
+                of.metric("Holdout obrat / měsíc", f"{hm['Holdout average turnover %']:.1f}%")
+                if "Holdout benchmark CAGR" in hm:
+                    og.metric("Holdout benchmark CAGR", f"{hm['Holdout benchmark CAGR']:.1%}")
+                holdout_fig = go.Figure()
+                holdout_fig.add_trace(go.Scatter(
+                    x=trained["curve"].index, y=trained["curve"]["Equity"],
+                    name="Vybraná strategie — holdout", line=dict(width=2.3, color="#72e0c1")
+                ))
+                if "Benchmark equity" in trained["curve"]:
+                    holdout_fig.add_trace(go.Scatter(
+                        x=trained["curve"].index, y=trained["curve"]["Benchmark equity"],
+                        name="Benchmark — holdout", line=dict(width=1.7, color="#f6bd60")
+                    ))
+                holdout_fig.update_layout(
+                    template="plotly_dark", title="Oddělený holdout · parametry vybrány bez znalosti jeho výsledku",
+                    height=330, margin=dict(l=10,r=10,t=45,b=10),
+                    paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(holdout_fig, width="stretch")
+                st.markdown("##### Tréninkové výsledky kandidátů")
+                st.caption("V této tabulce jsou pouze metriky z prvních 60 % historie. Po prohlédnutí holdoutu už parametry neupravuj, jinak se testovací část stane součástí vývoje.")
+                candidate_table = trained["candidates"]
+                st.dataframe(candidate_table, width="stretch", hide_index=True, column_config={
+                    "Train CAGR": st.column_config.NumberColumn(format="percent"),
+                    "Train Sharpe": st.column_config.NumberColumn(format="%.2f"),
+                    "Train max drawdown": st.column_config.NumberColumn(format="percent"),
+                    "Train turnover %": st.column_config.NumberColumn(format="%.1f%%"),
+                })
+                st.download_button(
+                    "Stáhnout tabulku tréninkových kandidátů CSV",
+                    candidate_table.to_csv(index=False).encode("utf-8"),
+                    "train_parameter_candidates.csv", "text/csv",
+                )
+                st.download_button(
+                    "Stáhnout vítězný holdout equity CSV",
+                    trained["curve"].to_csv().encode("utf-8"),
+                    "train_selected_holdout_curve.csv", "text/csv",
+                )
+                st.warning("Jde o jednorázový výběr parametrů na train a test na pozdější části, nikoli rolling walk-forward. Opakované úpravy gridu podle holdoutu ruší jeho nezávislost; současný ticker universe navíc stále vytváří survivorship bias.")
         variant_saved = st.session_state.get("stop_variant_comparison")
         if variant_saved and variant_saved.get("signature") == signature:
             st.markdown("#### Srovnání výstupních pravidel")
