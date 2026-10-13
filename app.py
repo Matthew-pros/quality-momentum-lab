@@ -319,18 +319,26 @@ with tab_overview:
         p1,p2 = st.columns(2)
         p1.metric("Pokrytí fundamenty", f"{screener['Fundamental coverage %'].mean():.0f}%")
         p2.metric("Breakout 55 dní", str(int(screener["Breakout55"].fillna(False).sum())))
+        st.subheader("Odvětvové skupiny podle SEC SIC")
+        group_counts = screener["SIC group"].fillna("Unclassified").value_counts().rename_axis("SIC group").reset_index(name="Počet")
+        st.dataframe(group_counts, width="stretch", hide_index=True, height=240)
+        st.caption("Jde o hrubou skupinu podle SIC kódu, nikoli standardizovanou GICS/ICB sektorovou klasifikaci.")
         st.markdown('<div class="qlab-panel"><b>Interpretace skóre</b><br><span class="qlab-small">Skóre je relativní pořadí uvnitř právě načteného univerza, nikoli očekávaný výnos. Chybějící fundamenty se nemění na neutrální hodnoty.</span></div>', unsafe_allow_html=True)
 
 with tab_screener:
     st.subheader("Screener a podkladové metriky")
-    search_col,signal_col,trend_col = st.columns([1.2,1,1])
+    search_col,industry_col,signal_col,trend_col = st.columns([1.25,1.2,1,1])
     search = search_col.text_input("Filtrovat ticker nebo název", "")
+    industry_options = ["Vše"] + sorted(screener["SIC group"].fillna("Unclassified").astype(str).unique().tolist())
+    industry_filter = industry_col.selectbox("Odvětví (SEC SIC)", industry_options, index=0)
     signal_options = ["Vše"] + sorted(screener["Signal"].dropna().astype(str).unique().tolist())
     signal_filter = signal_col.selectbox("Signál", signal_options, index=0)
     trend_filter = trend_col.selectbox("Trend", ["Vše","Pouze Trend OK","Pouze mimo trend"], index=0)
     shown = screener.copy()
     if search:
         shown = shown[shown["Ticker"].str.contains(search.upper(), na=False) | shown["Company"].astype(str).str.contains(search, case=False, na=False)]
+    if industry_filter != "Vše":
+        shown = shown[shown["SIC group"].fillna("Unclassified").astype(str) == industry_filter]
     if signal_filter != "Vše":
         shown = shown[shown["Signal"] == signal_filter]
     if trend_filter == "Pouze Trend OK":
@@ -338,7 +346,7 @@ with tab_screener:
     elif trend_filter == "Pouze mimo trend":
         shown = shown[~shown["Trend OK"]]
     display_cols = [
-        "Ticker","Company","Price","Fundamental/composite score","Technical score","Quality score","Value score",
+        "Ticker","Company","SIC group","SEC SIC","SEC SIC Description","Price","Fundamental/composite score","Technical score","Quality score","Value score",
         "Growth score","Momentum score","Fundamental coverage %","Fundamental status","ROE %","Profit margin %",
         "FCF margin %","Revenue growth %","Earnings growth %","FCF yield %","Momentum 12-1M","Momentum 6-1M",
         "ADX14","ATR20%","Breakout20","Breakout55","Trend OK","Below 50d low","Signal","Price date","Latest filing date"
@@ -667,6 +675,9 @@ with tab_data:
         for ticker in universe:
             record = fundamentals.get(ticker,{})
             sec_report.append({"Ticker":ticker,"Source":record.get("Source","No SEC data"),
+                "SEC SIC":record.get("SEC SIC", ""),
+                "SEC SIC Description":record.get("SEC SIC Description", ""),
+                "SIC group":record.get("SIC group", "Unclassified"),
                 "Financial period":record.get("Financial period",""),"Latest filing date":record.get("Latest filing date",""),
                 "Fundamental status":record.get("Fundamental status","Not loaded"),"Data note":record.get("Data note","")})
         st.markdown("#### Fundamentální zdroj a stáří výkazů")
