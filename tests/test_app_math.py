@@ -428,7 +428,7 @@ def test_daily_atr_trailing_stop_uses_gap_open_and_returns_exit_reason():
     frame.loc[stop_date, ["Open", "High", "Low", "Close", "Adj Close"]] = [90.0, 92.0, 88.0, 91.0, 91.0]
     indicators = calculate_indicators(frame)
 
-    ret, reason, exit_date = _simulate_position_month(
+    ret, reason, exit_date, high_water = _simulate_position_month(
         frame, indicators, signal_date, index[340],
         stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
     )
