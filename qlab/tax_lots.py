@@ -28,6 +28,7 @@ def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         out["Currency"] = "USD"
     else:
         out["Currency"] = out["Currency"].fillna("USD").astype(str).str.upper()
+    out["_source_order"] = np.arange(len(out), dtype=int)
     if out["Date"].isna().any():
         raise ValueError("One or more transaction dates could not be parsed.")
     if not out["Type"].isin(["BUY", "SELL"]).all():
@@ -36,7 +37,9 @@ def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Quantity must be > 0; price and fees cannot be negative.")
     if out["Ticker"].eq("").any():
         raise ValueError("Ticker cannot be empty.")
-    return out.sort_values(["Date"]).reset_index(drop=True)
+    out = out.sort_values(["Date", "_source_order"], kind="mergesort").reset_index(drop=True)
+    out["Transaction ID"] = np.arange(1, len(out) + 1, dtype=int)
+    return out.drop(columns=["_source_order"])
 
 
 def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -56,6 +59,7 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
         if txrow["Type"] == "BUY":
             lots[ticker].append({
                 "Ticker": ticker, "Acquisition date": txrow["Date"],
+                "Buy transaction ID": int(txrow["Transaction ID"]),
                 "Remaining quantity": qty, "Unit cost incl. fee": price + fee_per_share,
                 "Currency": currency,
             })
@@ -77,8 +81,10 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
             holding_period_end = lot["Acquisition date"] + pd.DateOffset(years=3)
             passes_3y_test = pd.Timestamp(txrow["Date"]).normalize() > pd.Timestamp(holding_period_end).normalize()
             realized.append({
-                "Ticker": ticker, "Sale date": txrow["Date"],
+                "Ticker": ticker, "Sale transaction ID": int(txrow["Transaction ID"]),
+                "Sale date": txrow["Date"],
                 "Acquisition date": lot["Acquisition date"],
+                "Buy transaction ID": int(lot["Buy transaction ID"]),
                 "Holding days": days,
                 "Holding period > 3 years": bool(passes_3y_test),
                 "Quantity matched": matched,
@@ -116,6 +122,7 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
             long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
             short_holds = year_mask & ~realized_df["Holding period > 3 years"].astype(bool)
             if currencies == {"CZK"}:
+                # Annual value test: gross proceeds from all securities sales in the year.
                 annual_gross = float(group["Gross sale proceeds"].sum())
                 if annual_gross <= 100_000:
                     realized_df.loc[year_mask, "Tax review status"] = (
@@ -127,34 +134,39 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                     long_gross = float(group.loc[group["Holding period > 3 years"].astype(bool), "Gross sale proceeds"].sum())
                     if long_gross > 40_000_000:
                         realized_df.loc[long_enough, "Tax review status"] = (
-                            "Historic-year 40m CZK exemption cap may apply; proportional calculation and other exempt sales need review"
+                            "Historic-year CZK 40m time-test cap may apply; review proportional calculation and other exempt sales"
                         )
                     else:
                         realized_df.loc[long_enough, "Tax review status"] = (
-                            "Potential 3-year time-test exemption; verify historic 40m CZK aggregate cap and eligibility"
+                            "Potential 3-year time-test exemption; verify historic CZK 40m aggregate cap and eligibility"
                         )
                 else:
                     realized_df.loc[long_enough, "Tax review status"] = (
-                        "Potential 3-year time-test exemption (40m cap removed from 2026); verify full eligibility"
+                        "Potential 3-year time-test exemption (CZK 40m securities cap removed from 2026); verify eligibility"
                     )
-                    long_gross = float(group.loc[group["Holding period > 3 years"].astype(bool), "Gross sale proceeds"].sum())
-                    if long_gross > 5_000_000:
-                        realized_df.loc[long_enough, "Tax review status"] = (
-                            "Potential time-test exemption; review notification duty for exempt income above CZK 5m"
-                        )
+                    # The notification test is per exempt receipt/sale, not the yearly sum.
+                    exempt_by_sale = (
+                        group.loc[group["Holding period > 3 years"].astype(bool)]
+                        .groupby("Sale transaction ID")["Gross sale proceeds"].sum()
+                    )
+                    report_ids = set(exempt_by_sale[exempt_by_sale > 5_000_000].index)
+                    notify_rows = long_enough & realized_df["Sale transaction ID"].isin(report_ids)
+                    realized_df.loc[notify_rows, "Tax review status"] = (
+                        "Potential §38v notice: single exempt sale receipt > CZK 5m; verify exceptions and filing duty"
+                    )
                 realized_df.loc[short_holds, "Tax review status"] = (
                     "Time test not met and value test exceeded: review taxable income, deductible costs, and applicable-year rules"
                 )
             else:
-                # The value test and historic limit are annual CZK tests. Without dated
-                # FX conversion across the full tax household portfolio, do not decide them.
-                if int(year) <= 2025:
-                    historic_note = "; historic 40m CZK cap may apply"
-                else:
-                    historic_note = "; 40m CZK securities cap removed from 2026"
+                historic_note = (
+                    "; historic CZK 40m time-test cap may apply"
+                    if int(year) <= 2025
+                    else "; CZK 40m securities cap removed from 2026"
+                )
+                notice_note = "; convert each potentially exempt receipt to CZK and check individual CZK 5m notice threshold"
                 realized_df.loc[long_enough, "Tax review status"] = (
                     "Potential 3-year time-test exemption; convert proceeds to CZK and review full portfolio"
-                    + historic_note
+                    + historic_note + notice_note
                 )
                 realized_df.loc[short_holds, "Tax review status"] = (
                     "Holding period <= 3 years; annual value test needs full CZK proceeds/FX review"
@@ -168,4 +180,4 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
                 "Tax review status": ("Tax review status", lambda x: " | ".join(sorted(set(x)))),
             }
         )
-    return realized_df, open_df, annual
+return realized_df, open_df, annual
