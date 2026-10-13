@@ -467,6 +467,18 @@ def _prepare_shared_backtest_kwargs(
 ) -> dict:
     """Precompute indicators and point-in-time scored cross-sections once per dataset."""
     prepared = dict(kwargs)
+    membership = prepared.get("universe_history")
+    if membership is not None:
+        if not {"Ticker", "Start date", "End date"}.issubset(membership.columns):
+            raise ValueError("universe_history must be parsed and contain Ticker, Start date, End date.")
+        missing = sorted(set(membership["Ticker"].astype(str).str.upper()) - set(prices))
+        if missing:
+            raise ValueError(
+                "Historical membership references ticker(s) without any OHLCV series: "
+                + ", ".join(missing[:20])
+                + (f" … and {len(missing) - 20} more" if len(missing) > 20 else "")
+                + ". Supply their historical prices, including delisted securities."
+            )
     indicators = prepared.get("precomputed_indicators")
     if indicators is None:
         indicators = _precompute_indicator_cache(prices)
