@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
-from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary
+from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -412,6 +412,7 @@ with tab_strategy:
         weighting_method, backtest_max_weight, stop_mode, stop_atr,
         use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
+    compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants")
     saved = st.session_state.get("backtest_result")
     if run_backtest:
         benchmark_series = _daily_returns(price_data_all["SPY"]) if "SPY" in price_data_all else None
@@ -442,9 +443,47 @@ with tab_strategy:
                     max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                     commission_bps=commission_bps, half_spread_bps=half_spread_bps,
                     slippage_bps=slippage_bps)
-                st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
+                st.session_state["backtest_result"] = {
+                    "curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None,
+                    "fundamentals_history":fund_histories,"optional_history":optional_histories
+                }
         except Exception as exc:
-            st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
+            st.session_state["backtest_result"] = {
+                "curve":None,"metrics":None,"audit":None,"signature":signature,
+                "error":f"{type(exc).__name__}: {exc}",
+                "fundamentals_history":fund_histories,"optional_history":optional_histories
+            }
+        saved = st.session_state.get("backtest_result")
+    if compare_stop_button:
+        if saved is None or saved.get("signature") != signature:
+            st.warning("Nejprve spusť backtest pro aktuální konfiguraci; srovnání musí používat stejnou konfiguraci.")
+        elif saved.get("error") or saved.get("curve") is None:
+            st.warning("Stop varianty nelze porovnat, dokud základní backtest nemá platný výsledek.")
+        else:
+            benchmark_series = _daily_returns(price_data_all["SPY"]) if "SPY" in price_data_all else None
+            with st.spinner("Porovnávám stop pravidla se stejnými vstupními parametry…"):
+                variants = compare_stop_variants(
+                    prices=prices,
+                    stop_modes=(
+                        "No stop / month-end rebalancing",
+                        "Month-end 50-day low",
+                        "ATR trailing stop",
+                        "Daily 50-day low",
+                        "ATR + daily 50-day low",
+                    ),
+                    benchmark=benchmark_series, top_n=top_n, cost_bps=cost_bps,
+                    initial=capital, min_adx=min_adx, min_score=min_score, hysteresis=hysteresis,
+                    max_replacements=max_replacements, use_fundamentals=use_pit,
+                    fundamentals_history=saved.get("fundamentals_history", {}),
+                    optional_history=saved.get("optional_history", {}),
+                    require_breakout=breakout_filter, weighting_method=weighting_method,
+                    max_position_weight=backtest_max_weight, stop_atr_multiple=stop_atr,
+                    sector_map=sector_map,
+                    max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
+                    commission_bps=commission_bps, half_spread_bps=half_spread_bps,
+                    slippage_bps=slippage_bps,
+                )
+                st.session_state["stop_variant_comparison"] = {"signature":signature,"table":variants}
         saved = st.session_state.get("backtest_result")
     if saved is None:
         st.info("Backtest ještě nebyl spuštěn. Spusť výpočet tlačítkem výše.")
@@ -518,6 +557,19 @@ with tab_strategy:
         })
         st.download_button("Stáhnout rozdělení období CSV", period_summary.to_csv(index=False).encode("utf-8"), "chronological_period_summary.csv", "text/csv")
         st.caption("Rozdělení je chronologické 60/20/20 (train/validation/holdout), se stejnými parametry a bez optimalizace uvnitř jednotlivých částí. Holdout je opravdu nedotčený pouze tehdy, pokud parametry neupravuješ podle jeho výsledku.")
+        variant_saved = st.session_state.get("stop_variant_comparison")
+        if variant_saved and variant_saved.get("signature") == signature:
+            st.markdown("#### Srovnání výstupních pravidel")
+            st.caption("Stejné univerzum, faktory, vstupní pravidla, váhy a náklady; liší se pouze zvolené výstupní pravidlo. Tabulku používej jako citlivostní analýzu, ne jako výběr vítěze podle holdout.")
+            variant_table = variant_saved["table"]
+            st.dataframe(variant_table, width="stretch", hide_index=True, column_config={
+                "CAGR": st.column_config.NumberColumn(format="percent"),
+                "Volatility": st.column_config.NumberColumn(format="percent"),
+                "Max drawdown": st.column_config.NumberColumn(format="percent"),
+                "Average monthly turnover %": st.column_config.NumberColumn(format="percent"),
+                "Average max SIC group weight %": st.column_config.NumberColumn(format="percent"),
+            })
+            st.download_button("Stáhnout srovnání stop variant CSV", variant_table.to_csv(index=False).encode("utf-8"), "stop_variant_comparison.csv", "text/csv")
         st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Cost model rozlišuje komisi, polovinu spreadu a skluz, ale neobsahuje fixní poplatky, market impact, FX ani daňový model.")
 
 with tab_valuation:
