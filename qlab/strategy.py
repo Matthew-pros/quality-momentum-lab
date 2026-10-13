@@ -679,6 +679,18 @@ def run_monthly_backtest(
         raise ValueError("Total cost bps must be finite and non-negative.")
     if not prices:
         return None, None, None
+    if universe_history is not None:
+        required_membership_columns = {"Ticker", "Start date", "End date"}
+        if not required_membership_columns.issubset(universe_history.columns):
+            raise ValueError("universe_history must be parsed and contain Ticker, Start date, End date.")
+        missing_membership_prices = sorted(set(universe_history["Ticker"].astype(str).str.upper()) - set(prices))
+        if missing_membership_prices:
+            raise ValueError(
+                "Historical membership references ticker(s) without any OHLCV series: "
+                + ", ".join(missing_membership_prices[:20])
+                + (f" … and {len(missing_membership_prices) - 20} more" if len(missing_membership_prices) > 20 else "")
+                + ". Supply their historical prices, including delisted securities."
+            )
     adjusted = {}
     indicator_cache: dict[str, pd.DataFrame] = {}
     shared_indicators = precomputed_indicators or {}
