@@ -1311,7 +1311,7 @@ with tab_data:
                 "ROE %":record.get("ROE %",np.nan),
                 "Profit margin %":record.get("Profit margin %",np.nan),
                 "FCF margin %":record.get("FCF margin %",np.nan),
-                "P/E (annual EPS proxy)":record.get("P/E (annual EPS proxy",np.nan),
+                "P/E (annual EPS proxy)":record.get("P/E (annual EPS proxy)",np.nan),
                 "FCF yield %":record.get("FCF yield %",np.nan),
                 "Fundamental status":record.get("Fundamental status","Not loaded"),
                 "Data note":record.get("Data note",""),
