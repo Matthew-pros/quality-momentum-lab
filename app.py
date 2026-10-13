@@ -338,7 +338,7 @@ if screener.empty:
     st.stop()
 
 # ------------------------------ Main header ------------------------------
-st.markdown('<div class="qlab-eyebrow">Systematic equity research · v2.2</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="qlab-eyebrow">Systematic equity research · build {APP_VERSION}</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-title">Quality × Value × Momentum</div>', unsafe_allow_html=True)
 st.markdown('<div class="qlab-subtitle">Výzkumné prostředí pro výběr akcií, dlouhodobé momentum, fundamentální kvalitu a řízení obratu portfolia. Důraz je na dohledatelných zdrojích, časové správnosti a výsledcích po nákladech — nikoli na falešné přesnosti.</div>', unsafe_allow_html=True)
 latest_price_date = max(frame.index.max() for frame in prices.values())
@@ -1121,7 +1121,9 @@ with tab_method:
         - Backtest používá současný seznam a není survivorship-bias-free. Měsíční close-to-close simulace není přesný broker fill model.
         - Sentiment/revize jsou volitelné časované CSV; historický model vybírá jen poslední známý záznam k rozhodovacímu dni.
         - FIFO eviduje pořizovací náklady a poplatky; neurčuje českou daňovou povinnost a nepřepočítává měny.
-        - HMM je záměrně odložen, dokud základní strategie neprojde out-of-sample testem. Jinak by zvyšoval riziko přeoptimalizace.
+        - Expanding walk-forward volí parametry z minulých dat a testuje je v neprolínajících se OOS foldech; každý fold začíná na hotovosti a na konci modelově likviduje pozice. Nejde o kontinuitní broker účet a neřeší survivorship bias.
+        - DCF je samostatný FCFE-style scénář, nikoli součást Composite score. Před použitím je třeba ověřit měnu, jednotky FCF, počet akcií, ADR poměr a příslušnou obchodovanou třídu.
+        - HMM je záměrně odložen, dokud základní strategie neprojde robustní out-of-sample testy. Jinak by zvyšoval riziko přeoptimalizace.
 
         ### Cesta k důvěryhodným výsledkům
         Historické univerzum včetně delistovaných titulů, jasná práva k datům, point-in-time fundamenty, dividendy/FX/corporate actions, spread a skluz, walk-forward validace a předem odložené testovací období.
