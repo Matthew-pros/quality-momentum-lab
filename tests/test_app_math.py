@@ -1205,6 +1205,9 @@ def test_backtest_never_selects_a_ticker_before_its_membership_start_date():
     decisions = pd.to_datetime(audit["Signal date"])
     before_ccc = audit.loc[decisions < pd.Timestamp("2021-01-01"), "Selected holdings"]
     assert before_ccc.map(lambda names: "CCC" not in names.split(", ")).all()
-    after_ccc = audit.loc[decisions >= pd.Timestamp("2021-01-01")]
-    assert not after_ccc.empty
-    assert (after_ccc["Eligible names"].str.split(", ").map(lambda names: "CCC" in names)).any()
+    from qlab.strategy import _build_monthly_cross_section, _precompute_indicator_cache
+    late_cross = _build_monthly_cross_section(
+        prices, pd.Timestamp("2021-06-30"), None, None,
+        indicator_cache=_precompute_indicator_cache(prices), universe_history=history,
+    )
+    assert "CCC" in set(late_cross["Ticker"])
