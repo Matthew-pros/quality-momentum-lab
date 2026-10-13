@@ -393,7 +393,13 @@ elif currency_unknown_tickers and not currency_confirm_usd:
 elif missing_investable_tickers:
     st.error("Portfolio analýza je vypnutá, protože chybí některé požadované cenové řady.")
 elif currency_unknown_tickers and currency_confirm_usd:
-    st.warning("Měna nebyla v CSV uvedena; pokračuješ na základě výslovného potvrzení, že všechny cenové řady už jsou v USD.")
+    st.warning("Měna nebyla ve zdrojovém CSV uvedena; na základě tvého potvrzení jsou tyto řady považovány za USD.")
+    for ticker in currency_unknown_tickers:
+        currency_by_ticker[ticker] = "USD"
+        if ticker in price_data_all:
+            price_data_all[ticker].attrs["currency"] = "USD"
+        if "Currency" in price_report:
+            price_report.loc[price_report["Ticker"].eq(ticker), "Currency"] = "USD (user-confirmed)"
 
 # Preserve source provenance in every downloadable data-quality report.
 price_source_label = "Deterministic synthetic DEMO" if is_demo_mode else "User-supplied OHLCV CSV"
@@ -449,6 +455,7 @@ else:
         st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
 
 all_screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
+all_screener["Currency"] = all_screener["Ticker"].map(currency_by_ticker).fillna("UNKNOWN")
 if all_screener.empty:
     st.error("Z cenových dat se nepodařilo vytvořit screener.")
     st.stop()
@@ -553,7 +560,7 @@ with tab_screener:
     elif trend_filter == "Pouze mimo trend":
         shown = shown[~shown["Trend OK"]]
     display_cols = [
-        "Ticker","Company","SIC group","SEC SIC","SEC SIC Description","Price","Fundamental/composite score","Technical score","Quality score","Value score",
+        "Ticker","Company","Currency","SIC group","SEC SIC","SEC SIC Description","Price","Fundamental/composite score","Technical score","Quality score","Value score",
         "Growth score","Momentum score","Fundamental coverage %","Fundamental status","ROE %","Profit margin %",
         "FCF margin %","Revenue growth %","Earnings growth %","FCF yield %","Momentum 12-1M","Momentum 6-1M",
         "ADX14","ATR20%","Breakout20","Breakout55","Trend OK","Below 50d low","Signal","Price date","Latest filing date"
