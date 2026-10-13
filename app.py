@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import download_market_data, generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
+from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
@@ -46,10 +46,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def cached_market_data(symbols: tuple[str, ...], period: str):
-    return download_market_data(list(symbols), period)
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def cached_sec_map(email: str):
@@ -159,7 +155,7 @@ with st.sidebar:
         height=106,
         key="demo_universe" if is_demo_mode else "market_universe",
         disabled=is_demo_mode,
-        help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Po přepnutí na CSV/Yahoo můžeš zadat skutečné tickery."
+        help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Po přepnutí na import CSV můžeš zadat skutečné tickery."
     )
     price_csv_upload = st.file_uploader(
         "Historie OHLCV CSV",
