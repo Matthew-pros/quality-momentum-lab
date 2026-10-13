@@ -673,3 +673,33 @@ def test_adjusted_ohlc_prevents_false_split_jump_in_trend_and_stop_indicators():
     assert indicators.loc[split_index, "Close raw"] == pytest.approx(raw.loc[split_index])
     assert not bool(indicators.loc[split_index, "Below 50d low"])
     assert 1.5 < indicators.loc[split_index, "ATR20%"] < 2.5
+
+
+def test_atr_position_sizing_enforces_aggregate_portfolio_risk_cap_after_integer_rounding():
+    from qlab.strategy import calculate_position_sizes
+
+    screener = pd.DataFrame([
+        {"Ticker":"AAA","Price":100.0,"ATR20":10.0},
+        {"Ticker":"BBB","Price":100.0,"ATR20":10.0},
+        {"Ticker":"CCC","Price":100.0,"ATR20":10.0},
+        {"Ticker":"DDD","Price":100.0,"ATR20":10.0},
+        {"Ticker":"EEE","Price":100.0,"ATR20":10.0},
+    ])
+    sized = calculate_position_sizes(
+        screener, ["AAA","BBB","CCC","DDD","EEE"], capital=10_000,
+        risk_budget_pct=1.0, stop_atr_multiple=3.0,
+        max_position_pct=100, max_total_exposure_pct=100,
+        max_total_risk_pct=2.0,
+    )
+    assert not sized.empty
+    assert sized["Initial risk budget"].sum() <= 200.0 + 1e-9
+    assert sized["Total portfolio risk %"].iloc[0] <= 2.0 + 1e-9
+    assert sized["Weight %"].sum() <= 100.0 + 1e-9
+
+
+def test_atr_position_sizing_rejects_invalid_risk_inputs():
+    from qlab.strategy import calculate_position_sizes
+
+    screener = pd.DataFrame([{"Ticker":"AAA","Price":100.0,"ATR20":5.0}])
+    with pytest.raises(ValueError, match="max_total_risk_pct"):
+        calculate_position_sizes(screener, ["AAA"], 10_000, max_total_risk_pct=-1)
