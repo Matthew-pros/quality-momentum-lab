@@ -418,6 +418,41 @@ def _build_monthly_cross_section(
     return score_cross_section(pd.DataFrame(rows)) if rows else pd.DataFrame()
 
 
+def _precompute_monthly_cross_sections(
+    prices: dict[str, pd.DataFrame],
+    fundamentals_history: dict[str, pd.DataFrame] | None = None,
+    optional_history: dict[str, pd.DataFrame] | None = None,
+    indicator_cache: dict[str, pd.DataFrame] | None = None,
+) -> dict[pd.Timestamp, pd.DataFrame]:
+    """Score each point-in-time month once when evaluating multiple parameter candidates.
+
+    Factor percentile ranks are cross-sectional and depend on source history/date, but
+    not on min_score or hysteresis. Sharing this cache avoids recalculating and re-ranking
+    the same universe for every fold/candidate combination.
+    """
+    adjusted: dict[str, pd.Series] = {}
+    for ticker, frame in prices.items():
+        if frame is None or frame.empty:
+            continue
+        source_col = "Adj Close" if "Adj Close" in frame else "Close"
+        if source_col not in frame:
+            continue
+        series = _num(frame[source_col]).dropna()
+        if len(series) >= 300:
+            adjusted[ticker] = series
+    if len(adjusted) < 2:
+        return {}
+    monthly = pd.DataFrame(adjusted).sort_index().resample("ME").last().dropna(how="all")
+    out: dict[pd.Timestamp, pd.DataFrame] = {}
+    cache = indicator_cache or _precompute_indicator_cache(prices)
+    for i in range(12, len(monthly) - 1):
+        signal_date = monthly.index[i]
+        out[pd.Timestamp(signal_date)] = _build_monthly_cross_section(
+            prices, signal_date, fundamentals_history, optional_history, indicator_cache=cache
+        )
+    return out
+
+
 def _target_weights(
     selected: list[str],
     cross_section: pd.DataFrame,
@@ -583,6 +618,7 @@ def run_monthly_backtest(
     evaluation_start_date: pd.Timestamp | str | None = None,
     evaluation_end_date: pd.Timestamp | str | None = None,
     precomputed_indicators: dict[str, pd.DataFrame] | None = None,
+    precomputed_cross_sections: dict[pd.Timestamp, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -666,7 +702,8 @@ def run_monthly_backtest(
             continue
         if end_cutoff is not None and decision_date > end_cutoff:
             continue
-        cross = _build_monthly_cross_section(
+        cached_cross = (precomputed_cross_sections or {}).get(pd.Timestamp(decision_date))
+        cross = cached_cross.copy(deep=True) if cached_cross is not None else _build_monthly_cross_section(
             prices, decision_date,
             fundamentals_history if use_fundamentals else None,
             optional_history, indicator_cache=indicator_cache
