@@ -135,6 +135,22 @@ def _download_frame(prices):
             series.append(frame[col].rename(ticker))
     return pd.concat(series, axis=1).sort_index() if series else pd.DataFrame()
 
+def _download_ohlcv_long(prices):
+    frames = []
+    columns = ["Date", "Ticker", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    for ticker, frame in prices.items():
+        if frame is None or frame.empty:
+            continue
+        part = frame.copy()
+        part.index = pd.to_datetime(part.index)
+        part["Ticker"] = str(ticker).upper()
+        part["Date"] = part.index.date.astype(str)
+        for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+            if column not in part:
+                part[column] = np.nan
+        frames.append(part[columns[1:]].assign(Date=part["Date"])[columns])
+    return pd.concat(frames, ignore_index=True).sort_values(["Ticker", "Date"]) if frames else pd.DataFrame(columns=columns)
+
 # -------------------------------- Controls --------------------------------
 with st.sidebar:
     st.markdown("### QUALITY MOMENTUM LAB")
@@ -791,7 +807,15 @@ with tab_data:
     st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
     combined = _download_frame(price_data_all)
     if not combined.empty:
-        st.download_button("Stáhnout adjustované cenové řady CSV",combined.to_csv(index_label="Date").encode("utf-8"),"adjusted_price_history.csv","text/csv")
+        st.download_button("Stáhnout adjustované cenové řady CSV (wide)",combined.to_csv(index_label="Date").encode("utf-8"),"adjusted_price_history_wide.csv","text/csv")
+    long_ohlcv = _download_ohlcv_long(price_data_all)
+    if not long_ohlcv.empty:
+        st.download_button(
+            "Stáhnout OHLCV CSV pro opětovný import (long format)",
+            long_ohlcv.to_csv(index=False).encode("utf-8"),
+            "ohlcv_history_long.csv", "text/csv",
+            help="Formát kompatibilní s CSV importem této aplikace. V demo režimu obsahuje výhradně syntetické ceny.",
+        )
     if valid_email:
         sec_report = []
         for ticker in universe:
