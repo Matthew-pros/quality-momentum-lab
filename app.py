@@ -189,7 +189,11 @@ with st.sidebar:
         help="Denní stop varianty používají denní OHLC, stop založený na datech předchozího close a gap-aware fill na open. Není to intradenní simulace."
     )
     st.caption("ATR stop využívá hodnotu z pole „Stop distance (× ATR20)“ níže.")
-    cost_bps = st.slider("Náklady na zobchodovaný objem (bps)", 0, 100, 15, 5)
+    commission_bps = st.slider("Komise na zobchodovaný objem (bps)", 0, 20, 1, 1)
+    half_spread_bps = st.slider("Odhad poloviny bid/ask spreadu (bps)", 0, 50, 5, 1)
+    slippage_bps = st.slider("Skluz při exekuci (bps)", 0, 50, 5, 1)
+    cost_bps = commission_bps + half_spread_bps + slippage_bps
+    st.caption(f"Celkové modelované náklady: {cost_bps} bps na každou jednotku zobchodovaného objemu; nejde o odhad konkrétního brokera.")
     st.divider()
     capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
     risk_budget_pct = st.slider("Riziko na pozici (% kapitálu)", 0.1, 2.0, 0.5, 0.1)
@@ -401,7 +405,8 @@ with tab_strategy:
     if max_sector_positions > 0 and classified_sector_count < len(universe):
         st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
     signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
-        max_sector_positions, cost_bps, breakout_filter, weighting_method, backtest_max_weight, stop_mode, stop_atr,
+        max_sector_positions, commission_bps, half_spread_bps, slippage_bps, cost_bps, breakout_filter,
+        weighting_method, backtest_max_weight, stop_mode, stop_atr,
         use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
     saved = st.session_state.get("backtest_result")
@@ -431,7 +436,9 @@ with tab_strategy:
                     require_breakout=breakout_filter, weighting_method=weighting_method,
                     max_position_weight=backtest_max_weight, stop_mode=stop_mode,
                     stop_atr_multiple=stop_atr, sector_map=sector_map,
-                    max_sector_positions=max_sector_positions if max_sector_positions > 0 else None)
+                    max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
+                    commission_bps=commission_bps, half_spread_bps=half_spread_bps,
+                    slippage_bps=slippage_bps)
                 st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
         except Exception as exc:
             st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
@@ -508,7 +515,7 @@ with tab_strategy:
         })
         st.download_button("Stáhnout rozdělení období CSV", period_summary.to_csv(index=False).encode("utf-8"), "chronological_period_summary.csv", "text/csv")
         st.caption("Rozdělení je chronologické 60/20/20 (train/validation/holdout), se stejnými parametry a bez optimalizace uvnitř jednotlivých částí. Holdout je opravdu nedotčený pouze tehdy, pokud parametry neupravuješ podle jeho výsledku.")
-        st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Náklady nezahrnují plně spread, skluz, FX a daňový model.")
+        st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Cost model rozlišuje komisi, polovinu spreadu a skluz, ale neobsahuje fixní poplatky, market impact, FX ani daňový model.")
 
 with tab_valuation:
     st.subheader("DCF / scénářová hodnota akcie")
