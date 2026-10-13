@@ -2,75 +2,86 @@
 
 ## Finální cíl
 
-Bezpečná, reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testování strategie s nízkou obrátkou portfolia. Aplikace musí umět prokázat, odkud data pocházejí, kdy byla dostupná, jak se počítají signály a jak se mění výsledek po nákladech. Dokud nejsou splněny validační podmínky, nesmí být backtest prezentován jako důkaz budoucí výkonnosti.
+Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testování strategie s nízkou obrátkou. Každá metrika má zdroj, datum a přesné pravidlo výpočtu; historická rozhodnutí používají pouze tehdy dostupné informace; výsledky ukazují obrat, riziko, náklady a porovnání s benchmarkem. Dokud neprojde walk-forward a odloženým out-of-sample testem, aplikace nesmí tvrdit, že strategie má prokázanou výhodu.
 
 ## Fáze 0 — Oprava výpočtů a základní QA
 
-- [x] Zkontrolovat logiku současného screeneru a backtestu.
-- [x] Srovnat signál backtestu s výnosem následujícího měsíce.
-- [x] Použít hrubý objem obchodů pro odhad nákladů.
-- [x] Počítat průraz z předchozích denních maxim a ATR(20) z true range.
-- [x] Nahradit absolutní FCF relativní marží a penalizovat neúplné fundamentální skóre tím, že se chybějící vstupy ignorují a vykazuje se pokrytí.
-- [x] Přidat přehled dostupnosti cenových řad a automatické regresní testy.
-- [ ] Zkontrolovat výsledek CI a nasazení na Streamlit Community Cloud.
+- [x] Opravit časování signálu a návratnosti dalšího měsíce v backtestu.
+- [x] Počítat obrat jako hrubý zobchodovaný objem (nákupy + prodeje).
+- [x] Počítat průraz z předchozích 20/55 denních high a ATR(20) z true range.
+- [x] Zachovat chybějící faktory jako chybějící; nevyplňovat je fiktivním neutrálním skóre 50.
+- [x] Přidat regresní testy indikátorů, časování, look-ahead, SEC as-of date, vah a FIFO.
+- [x] Přidat GitHub Actions test workflow.
+- [ ] Ověřit aktuální živou verzi na Streamlit Community Cloud a zkontrolovat log po posledních změnách.
 
-## Fáze 1 — Ověřená data
+## Fáze 1 — Data a provenance
 
-- [ ] Přidat automatickou kontrolu stavu zdroje, posledního obchodního dne, prázdných řad, duplicit a neobvykle velkých cenových skoků.
-- [ ] U fundamentálních dat zobrazovat zdroj, období výkazu, datum zveřejnění, datum stažení a úspěšnost načtení.
-- [ ] Přidat kontrolní vzorek vybraných tickerů porovnaný s nezávislým zdrojem.
-- [ ] Pro americké akcie přidat oficiální SEC EDGAR Company Facts/filing data; respektovat datum zveřejnění a opravy výkazů.
-- [ ] Pro jiné trhy vybrat zdroj s jasnou licencí, pokrytím a limity. Nezáviset na nezdokumentovaném API jako na jediné produkční databázi.
+- [x] Oddělit cenový adapter od fundamentálního zdroje; přestat používat nestabilní Yahoo `.info` endpoint pro fundamenty.
+- [x] Stahovat ceny v jedné neparalelní dávce, normalizovat různé tvary sloupců a při částečném selhání opakovat chybějící tickery sekvenčně.
+- [x] Vykazovat první/poslední datum cenové řady, počet řádků, chybějící řady a exportovat kontrolní CSV.
+- [x] Přidat oficiální SEC EDGAR Company Facts adaptér s identifikačním User-Agent a opakováním při přechodných HTTP chybách.
+- [ ] Porovnat konkrétní tickery s nezávislým cenovým zdrojem a ručně zkontrolovat vybrané XBRL metriky.
+- [ ] Doplnit detekci zastaralých cen, podezřelých skoků, splitů, duplicit po transformaci a varování na příliš řídkou historii.
+- [ ] Vybrat zdroj s vhodnými právy pro veřejné použití a redistribuci; Yahoo/yfinance zůstává pouze zdrojem pro experimentální výzkum, dokud nejsou práva vyřešena.
 
-**Brána fáze:** cena a fundament každé firmy mají identifikovatelný zdroj, datum a stav úplnosti.
+**Brána fáze:** žádný chybějící nebo starý údaj nesmí být tiše prezentován jako ověřená aktuální data.
 
-## Fáze 2 — Bodově správné fundamenty a signály
+## Fáze 2 — Fundamenty a časová správnost
 
-- [ ] Zavést point-in-time fundamenty; historická rozhodnutí smějí používat jen informace zveřejněné do daného data.
-- [ ] Zlepšit srovnatelnost sektorů a metrik: ROIC/ROE, marže, zadlužení, cash-flow marže a valuation násobky.
-- [ ] Oddělit ziskové a ztrátové firmy; záporné násobky neinterpretovat jako levné ocenění.
-- [ ] Přidat revize odhadů zisků jen pokud historie a čas zveřejnění jsou doložitelné.
-- [ ] Sentiment přidat až po vyřešení historických timestampů, licencí a reprodukovatelnosti.
-- [ ] Každý signál popsat vzorcem, jednotkou, obdobím a zacházením s chybějícími daty.
+- [x] Zavést SEC snapshoty filtrované podle data zveřejnění a konzervativně odložit fakta zveřejněná v den uzavíracího signálu až na další rozhodovací den.
+- [x] Vypočítat roční růst tržeb/zisku, ROE proxy, marži, FCF a FCF marži z dostupných standardizovaných výkazů.
+- [x] Vykazovat fundamentální pokrytí a stav SEC dat; chybějící metriky zůstávají prázdné.
+- [x] Přidat časované CSV vstupy pro sentiment a analytické revize; historie používá poslední záznam známý k rozhodovacímu datu.
+- [ ] Ověřit SEC tagy, jednotky, fiskální roky, opravy výkazů, ADR a duální třídy pro reprezentativní vzorek.
+- [ ] Doplnit point-in-time mapování historie tickerů/CIK, segmentové metriky, sektorově srovnatelné metriky a transparentní zacházení se záporným vlastním kapitálem.
+- [ ] Získat dlouhodobou historii analytických revizí a sentimentu s doložitelným časovým razítkem a právy k použití; dokud není k dispozici, nesmí být skóre vyplňováno odhadem.
 
-**Brána fáze:** stejné vstupy a stejná konfigurace musí dát přesně stejné skóre; neúplná data nesmí být zaměňována za skutečné neutrální hodnoty.
+**Brána fáze:** historické rozhodnutí nevyužívá informaci, která nebyla veřejně dostupná v daném okamžiku. SEC prototyp pokrývá jen část universe a není ještě účetně ověřeným komerčním datovým feedem.
 
-## Fáze 3 — Backtest bez zásadního úniku informací
+## Fáze 3 — Backtest a benchmarky
 
-- [ ] Použít historický investiční univerzum včetně delistovaných titulů a změn indexových složení.
-- [ ] Definovat přesný okamžik signálu, okamžik obchodu a cenu realizace bez použití budoucího close.
-- [ ] Zahrnout dividendy, splits, měny, spread, skluz, komise a realistické náklady obratu portfolia.
-- [ ] Přidat benchmarky (např. široký tržní ETF odpovídající regionu) a buy-and-hold srovnání.
-- [ ] Ověřit hotovost, chybějící ceny, IPO, delistingy, corporate actions a rebalancování.
-- [ ] Oddělit vývojové období, walk-forward validaci a předem nedotčený holdout.
+- [x] Měsíční signál na konci měsíce, výnos za následující měsíc a audit vybraných pozic.
+- [x] Přidat měsíční obrat, náklady v bps, CAGR, volatilitu, Sharpe, drawdown, SPY benchmark a export equity curve/auditu.
+- [x] Přidat hysterézi, limit výměn na rebalancování a měsíční výstupní spouštěč 50denního minima.
+- [x] Přidat volbu Equal Weight vs. Inverse ATR se stropem váhy, neinvestovaný zbytek zůstává v hotovosti.
+- [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
+- [ ] Nahradit hrubý close-to-close cost proxy realistickým modelem exekuce: open/close fill, spread, skluz, komise, likvidita, FX, dividendy a corporate actions.
+- [ ] Zpracovat v plném backtestu stop-loss/trailing stop na denních cenách; dnešní 50denní exit je měsíční uzavírací pravidlo a nenapodobuje intradenní plnění.
+- [ ] Přidat walk-forward, oddělený vývojový/testovací vzorek, benchmarky napříč regiony a report sektorových/regime expozic.
+- [ ] Přidat kontrolu citlivosti, transakční náklady při malých i stresových objemech a prokázat, že chybějící/delistované výnosy nezkreslují výsledek.
 
-**Brána fáze:** testy bez look-ahead bias, srovnání s benchmarkem a výsledky po nákladech jsou reprodukovatelné.
+**Brána fáze:** výsledek musí být reprodukovatelný, s náklady, bez look-ahead bias a s benchmarkem; používání aktuálního tickerového seznamu stále znamená survivorship bias.
 
-## Fáze 4 — Portfolio, riziko a nižší obrat
+## Fáze 4 — Portfolio, řízení rizika a daně
 
-- [ ] Zavést cílové váhy, limit jedné pozice a sektorové koncentrace.
-- [ ] Přidat position sizing podle ATR/volatility a pravidla pro maximální riziko portfolia.
-- [ ] Testovat MA200, trailing stop a 50denní low jako samostatné varianty, ne jako předem jisté zlepšení.
-- [ ] Přidat hysterézi: obchod jen když je změna skóre významná a očekávaný přínos převyšuje náklady.
-- [ ] Reportovat obrat, počet obchodů, dobu držení a příspěvek nákladů k výnosu.
+- [x] Přidat samostatný ATR risk-sizing kalkulátor s max. váhou pozice a maximální expozicí.
+- [x] Přidat Inverse ATR vážení do backtestu, váhový strop a report skutečné expozice včetně hotovosti.
+- [x] Přidat hysterézi a omezený počet náhradních pozic při měsíčním rebalancování.
+- [x] Přidat FIFO evidence nákupů/prodejů s rozdělením poplatků, realizovaným výsledkem a otevřenými loty.
+- [x] Přidat předběžné daňové kontrolní štítky pro české osvobození (CZK roční hrubý hodnotový test a více než tříletý časový test) podle oficiálního shrnutí pro rok 2026.
+- [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje za celý rok, corporate actions, dědictví a výjimky (např. obchodní majetek); nesmí to být považováno za finální výpočet daně.
+- [ ] Přidat sektorové limity, portfolio-level risk budget, počet obchodů, dobu držení a příspěvek nákladů.
+- [ ] Testovat 50denní minimum, ATR trailing stop, MA200 a breakout jako oddělené varianty, ne jako předem jisté zlepšení.
+
+**Daňové upozornění:** modul zatím neurčuje daňovou povinnost, sazbu ani obsah přiznání. Pro orientaci vychází z veřejného shrnutí Finanční správy: https://financnisprava.gov.cz/cs/financni-sprava/media-a-verejnost/tiskove-zpravy-gfr/tiskove-zpravy-2026/danove-novinky-pro-rok-2026. U konkrétních případů je třeba ověřit zákonné podmínky a úplnost celého portfolia.
 
 ## Fáze 5 — Robustnost a release 1.0
 
-- [ ] Spustit citlivostní testy napříč parametry a obdobími trhu.
-- [ ] Vyhodnotit výkonnost po sektorech, regionech, velikosti firmy a v krizových obdobích.
-- [ ] Reportovat CAGR, volatilitu, Sharpe, maximální drawdown, obrat, expozice, benchmark a interval nejistoty.
-- [ ] Přidat automatické testy výpočtů, testy úniku budoucích dat a smoke test Streamlit aplikace.
-- [ ] Zdokumentovat datové licence, známá omezení a reprodukční postup.
+- [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
+- [ ] Přidat CI test kompletního importu a spuštění Streamlit UI proti simulovaným datům bez síťových volání.
+- [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
+- [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
+- [ ] Reportovat nejistotu výkonu, volatilitu, drawdown, obrat, benchmark a expozice po sektorech/obdobích.
+- [ ] Dokumentovat licence zdrojů, limity pokrytí, reprodukční postup a povinné varování veřejného UI.
 
-**Podmínka finální verze:** žádné tvrzení o strategické výhodě bez out-of-sample důkazů; žádné automatické zadávání obchodů; veřejné UI zřetelně odděluje data, signály, simulaci a investiční doporučení (které neposkytuje).
+**Podmínka release 1.0:** žádné tvrzení o strategické výhodě bez out-of-sample důkazu; žádné automatické obchodní pokyny; jasné oddělení zdrojových dat, skóre, simulace a osobního rozhodnutí.
 
 ## Pracovní pořadí
 
-1. Fáze 0 — opravy výpočtů, automatické testy a ověření nasazení.
-2. Fáze 1 — data a provenance.
-3. Fáze 2 — point-in-time fundamenty.
-4. Fáze 3 — realistický backtest a benchmarky.
-5. Fáze 4 — řízení portfolia a obratu.
-6. Fáze 5 — robustnost a release 1.0.
+1. Ověřit poslední nasazení a projít živý log bez nových chyb.
+2. Uzavřít kontroly zdrojů a SEC metrik na konkrétních tickerech.
+3. Rozšířit point-in-time univerzum a přesnost historických dat.
+4. Zrealističtit exekuce, náklady a portfolio risk.
+5. Teprve poté spustit walk-forward a odložený holdout; sentiment/HMM ponechat jen pokud prokážou přírůstkovou hodnotu po nákladech.
 
-Nezačínat sentimentem ani HMM, dokud nejsou spolehlivá data, časová správnost a základní backtest. Tyto doplňky musí prokázat přínos na holdout období po nákladech.
+HMM zůstává odložen: bez silného a dobře testovaného základního modelu by zvyšoval riziko přeoptimalizace a přidával složitost bez prokázaného přínosu.
