@@ -18,7 +18,7 @@ from qlab.optional_signals import parse_signal_csv, latest_signals, signal_histo
 from qlab.tax_lots import fifo_ledger
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
 BENCHMARKS = ("SPY",)
 EXCLUDED_FUNDS = {"SPY", "ACWI", "QQQ", "VTI"}
