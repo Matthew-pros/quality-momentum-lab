@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 from datetime import datetime, timezone
 
 import numpy as np
@@ -214,6 +215,9 @@ if valid_email:
         valid_tickers = [t for t in universe if t in sec_map and t not in EXCLUDED_FUNDS]
         progress = st.progress(0, text="Načítám SEC EDGAR fundamentals…")
         for idx, ticker in enumerate(valid_tickers):
+            # Keep request rate below the SEC fair-access ceiling when cache misses occur.
+            if idx:
+                time.sleep(0.12)
             try:
                 issuer = sec_map[ticker]
                 bundle = cached_sec_bundle(ticker, sec_email.strip(), int(issuer["cik"]), str(issuer["title"]))
