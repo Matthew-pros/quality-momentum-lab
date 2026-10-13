@@ -111,9 +111,9 @@ def download_market_data(tickers: str | list[str], period: str = "10y") -> tuple
             "Missing %": round(float(frame["Close"].isna().mean() * 100), 2) if not frame.empty else 100.0,
             "Message": message if message else ("" if not frame.empty else "Provider returned no rows for this ticker"),
         })
-    # Retry only missing symbols, sequentially: the logs showed a per-symbol
-    # "database is locked" error while the old UI also made parallel .info calls.
-    if len(prices) < len(symbols):
+    # Retry a partial batch only for missing symbols, sequentially. If every
+    # symbol failed, it is probably a provider/rate-limit outage; do not hammer it.
+    if prices and len(prices) < len(symbols):
         for ticker in symbols:
             if ticker in prices:
                 continue
@@ -272,9 +272,6 @@ def sec_fundamental_snapshot(fact_bundle: dict[str, Any], as_of: str | date, lat
     """Compute current or historical point-in-time ratios, filtering every fact by filed date."""
     company_facts = fact_bundle["payload"]
     cutoff = pd.Timestamp(as_of).date()
-    payload_facts = company_facts.get("facts", {})
-    available_tag_count = sum(len(tax.get(tag, {}).get("units", {})) for tax in payload_facts.values() for tag in [])
-
     revenue_tags = [
         "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues",
         "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax",
@@ -324,6 +321,15 @@ def sec_fundamental_snapshot(fact_bundle: dict[str, Any], as_of: str | date, lat
     cfo_filed = _latest_annual_with_filing(cfo, company_facts, cfo_tags, cutoff)[2]
     filing_dates = [d for d in [revenue_filed, income_filed, cfo_filed, equity_filed, debt_filed, shares_filed] if d]
     latest_filed = max(filing_dates) if filing_dates else ""
+    coverage_fields = [
+        revenue_last, income_last, growth(revenue_last, revenue_prev),
+        growth(income_last, income_prev),
+        income_last / equity * 100 if pd.notna(income_last) and pd.notna(equity) and equity > 0 else np.nan,
+        income_last / revenue_last * 100 if pd.notna(income_last) and pd.notna(revenue_last) and revenue_last > 0 else np.nan,
+        fcf, fcf / revenue_last * 100 if pd.notna(fcf) and pd.notna(revenue_last) and revenue_last > 0 else np.nan,
+    ]
+    coverage_pct = sum(bool(pd.notna(value)) for value in coverage_fields) / len(coverage_fields) * 100
+    status = "OK" if coverage_pct >= 50 and len(filing_dates) >= 3 else "Partial SEC coverage"
 
     return {
         "Ticker": fact_bundle["ticker"],
@@ -348,7 +354,8 @@ def sec_fundamental_snapshot(fact_bundle: dict[str, Any], as_of: str | date, lat
         "Estimated market cap": market_cap,
         "P/E (annual EPS proxy)": market_cap / income_last if pd.notna(market_cap) and pd.notna(income_last) and income_last > 0 else np.nan,
         "FCF yield %": fcf / market_cap * 100 if pd.notna(fcf) and pd.notna(market_cap) and market_cap > 0 else np.nan,
-        "Fundamental status": "OK" if len(filing_dates) >= 3 else "Partial SEC coverage",
+        "Fundamental coverage %": coverage_pct,
+        "Fundamental status": status,
         "Data note": "Current market price × latest reported shares is an estimate; annual ratios use the latest annual filing public by the as-of date.",
     }
 
