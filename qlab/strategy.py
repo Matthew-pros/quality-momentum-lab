@@ -385,6 +385,94 @@ def _target_weights(
     return target
 
 
+def _simulate_position_month(
+    frame: pd.DataFrame,
+    indicators: pd.DataFrame,
+    signal_date: pd.Timestamp,
+    return_period_end: pd.Timestamp,
+    stop_mode: str = "Month-end 50-day low",
+    stop_atr_multiple: float = 3.0,
+) -> tuple[float, str, str]:
+    """Simulate one selected position through the next month using daily bars.
+
+    Stop levels use information available through the prior daily close. On a gap
+    below the stop the model fills at that day's open; otherwise it fills at the
+    stop level. This is a daily-bar approximation, not an intraday sequence model.
+    """
+    if frame is None or frame.empty:
+        return np.nan, "MISSING", ""
+    frame = frame.sort_index()
+    close = _num(frame.get("Close", pd.Series(index=frame.index, dtype=float)))
+    adjusted = _num(frame.get("Adj Close", close)).reindex(frame.index)
+    known = frame.index[frame.index <= signal_date]
+    if len(known) == 0:
+        return np.nan, "MISSING", ""
+    entry_date = known[-1]
+    entry_close = float(close.loc[entry_date]) if pd.notna(close.loc[entry_date]) else np.nan
+    entry_adjusted = float(adjusted.loc[entry_date]) if pd.notna(adjusted.loc[entry_date]) else entry_close
+    if not np.isfinite(entry_close) or entry_close <= 0 or not np.isfinite(entry_adjusted) or entry_adjusted <= 0:
+        return np.nan, "MISSING", ""
+
+    path = frame.loc[(frame.index > entry_date) & (frame.index <= return_period_end)]
+    if path.empty:
+        return np.nan, "MISSING", ""
+    high_series = _num(frame.get("High", close)).reindex(frame.index)
+    high_water = float(high_series.loc[frame.index <= entry_date].max()) if high_series.loc[frame.index <= entry_date].notna().any() else entry_close
+    if not np.isfinite(high_water):
+        high_water = entry_close
+    prior_atr = np.nan
+    if indicators is not None and entry_date in indicators.index and "ATR20" in indicators:
+        prior_atr = pd.to_numeric(pd.Series([indicators.loc[entry_date, "ATR20"]]), errors="coerce").iloc[0]
+
+    daily_indicators = indicators if indicators is not None else pd.DataFrame()
+    for dt, bar in path.iterrows():
+        raw_close = pd.to_numeric(pd.Series([bar.get("Close", np.nan)]), errors="coerce").iloc[0]
+        raw_open = pd.to_numeric(pd.Series([bar.get("Open", raw_close)]), errors="coerce").iloc[0]
+        raw_low = pd.to_numeric(pd.Series([bar.get("Low", raw_close)]), errors="coerce").iloc[0]
+        raw_high = pd.to_numeric(pd.Series([bar.get("High", raw_close)]), errors="coerce").iloc[0]
+        if not np.isfinite(raw_close) or raw_close <= 0:
+            continue
+        if not np.isfinite(raw_open) or raw_open <= 0:
+            raw_open = raw_close
+        if not np.isfinite(raw_low) or raw_low <= 0:
+            raw_low = raw_close
+
+        levels: list[tuple[str, float]] = []
+        if stop_mode in {"ATR trailing stop", "ATR + daily 50-day low"} and np.isfinite(prior_atr) and prior_atr > 0:
+            atr_level = high_water - float(stop_atr_multiple) * float(prior_atr)
+            if np.isfinite(atr_level) and atr_level > 0:
+                levels.append(("ATR trailing stop", atr_level))
+        if stop_mode in {"Daily 50-day low", "ATR + daily 50-day low"} and dt in daily_indicators.index:
+            low50 = pd.to_numeric(pd.Series([daily_indicators.loc[dt].get("Low50 prior", np.nan)]), errors="coerce").iloc[0]
+            if np.isfinite(low50) and low50 > 0:
+                levels.append(("Daily 50-day low", float(low50)))
+        stop_level = max((level for _, level in levels), default=np.nan)
+        if np.isfinite(stop_level) and (raw_open <= stop_level or raw_low <= stop_level):
+            fill_raw = float(raw_open if raw_open <= stop_level else stop_level)
+            adj_current = pd.to_numeric(pd.Series([bar.get("Adj Close", raw_close)]), errors="coerce").iloc[0]
+            factor = float(adj_current / raw_close) if np.isfinite(adj_current) and adj_current > 0 else 1.0
+            fill_adjusted = fill_raw * factor
+            reason_names = [
+                name for name, level in levels
+                if np.isclose(level, stop_level, rtol=1e-8, atol=1e-8)
+            ]
+            reason = " + ".join(reason_names) if reason_names else "Daily stop"
+            return fill_adjusted / entry_adjusted - 1, reason, pd.Timestamp(dt).date().isoformat()
+
+        if np.isfinite(raw_high) and raw_high > 0:
+            high_water = max(high_water, float(raw_high))
+        if dt in daily_indicators.index and "ATR20" in daily_indicators:
+            current_atr = pd.to_numeric(pd.Series([daily_indicators.loc[dt, "ATR20"]]), errors="coerce").iloc[0]
+            if np.isfinite(current_atr) and current_atr > 0:
+                prior_atr = float(current_atr)
+
+    last_date = path.index[-1]
+    last_adj = adjusted.loc[last_date] if last_date in adjusted.index else np.nan
+    if pd.isna(last_adj) or not np.isfinite(float(last_adj)) or float(last_adj) <= 0:
+        return np.nan, "MISSING", ""
+    return float(last_adj / entry_adjusted - 1), "HOLD", ""
+
+
 def run_monthly_backtest(
     prices: dict[str, pd.DataFrame],
     benchmark: pd.Series | None = None,
@@ -401,6 +489,8 @@ def run_monthly_backtest(
     require_breakout: str = "None",
     weighting_method: str = "Equal weight",
     max_position_weight: float = 0.35,
+    stop_mode: str = "Month-end 50-day low",
+    stop_atr_multiple: float = 3.0,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
