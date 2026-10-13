@@ -703,6 +703,9 @@ def _latest_annual_with_filing(
     cutoff: str | date,
 ) -> tuple[float, str, str]:
     records = _concept_records(company_facts, tags, cutoff)
+    selected_unit = str(series.attrs.get("unit", "") or "")
+    if selected_unit:
+        records = [row for row in records if str(row.get("unit", "")) == selected_unit]
     by_end: dict[str, dict[str, Any]] = {}
     for row in records:
         if not str(row.get("form", "")).startswith(("10-K", "20-F", "40-F")) or not row.get("start"):
