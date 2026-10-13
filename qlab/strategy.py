@@ -357,7 +357,7 @@ def _target_weights(
     if scores.sum() <= 0:
         return {ticker: 1.0 / len(selected) for ticker in selected}
 
-    cap = float(np.clip(max_position_weight, 1.0 / len(selected), 1.0))
+    cap = float(np.clip(max_position_weight, 0.05, 1.0))
     remaining = list(selected)
     target: dict[str, float] = {ticker: 0.0 for ticker in selected}
     budget = 1.0
