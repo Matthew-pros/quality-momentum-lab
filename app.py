@@ -12,7 +12,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import download_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
+from qlab.data import download_market_data, generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, compare_stop_variants
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
@@ -20,6 +20,7 @@ from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
 APP_VERSION = "2.1.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
+DEFAULT_DEMO_UNIVERSE = "SIM01,SIM02,SIM03,SIM04,SIM05,SIM06,SIM07,SIM08,SIM09,SIM10,SIM11,SIM12"
 BENCHMARKS = ("SPY",)
 EXCLUDED_FUNDS = {"SPY", "ACWI", "QQQ", "VTI"}
 
@@ -142,12 +143,24 @@ def _download_frame(prices):
 with st.sidebar:
     st.markdown("### QUALITY MOMENTUM LAB")
     st.caption(f"Research console · build {APP_VERSION}")
-    ticker_text = st.text_area("Investiční univerzum", DEFAULT_UNIVERSE, height=106)
     price_provider = st.selectbox(
         "Zdroj cenových dat",
-        ["Yahoo Finance / yfinance (experimentální)", "Import OHLCV CSV (vlastní/licencovaná data)"],
+        [
+            "Demo — syntetická data (bez externího API)",
+            "Import OHLCV CSV (vlastní/licencovaná data)",
+            "Yahoo Finance / yfinance (experimentální)",
+        ],
         index=0,
-        help="Yahoo může vracet HTTP 401 Invalid Crumb nebo omezit přístup. Pro spolehlivý veřejný provoz použij zdroj s povolenou licencí nebo vlastní historické CSV."
+        help="Veřejný režim se spouští nad syntetickými daty, aby nepublikoval tržní data bez ověřené licence. Pro skutečné ceny nahraj licencované CSV. Yahoo je pouze experimentální zdroj a nesmí být použit pro veřejné zobrazování bez příslušných práv."
+    )
+    is_demo_mode = price_provider.startswith("Demo")
+    ticker_text = st.text_area(
+        "Investiční univerzum",
+        DEFAULT_DEMO_UNIVERSE if is_demo_mode else DEFAULT_UNIVERSE,
+        height=106,
+        key="demo_universe" if is_demo_mode else "market_universe",
+        disabled=is_demo_mode,
+        help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Po přepnutí na CSV/Yahoo můžeš zadat skutečné tickery."
     )
     price_csv_upload = st.file_uploader(
         "Historie OHLCV CSV",
@@ -157,10 +170,12 @@ with st.sidebar:
         help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume. Jedna řádka na ticker a datum."
     )
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
-    if price_provider.startswith("Yahoo"):
-        st.warning("Yahoo Finance je neoficiální zdroj a podle logu může vracet HTTP 401 Invalid Crumb. Je ponechán jako experimentální fallback, nikoli jako garantovaný produkční feed.")
+    if is_demo_mode:
+        st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
+    elif price_provider.startswith("Yahoo"):
+        st.warning("Yahoo Finance je neoficiální zdroj; jeho vlastní nápověda zakazuje redistribuci zobrazovaných informací bez odpovídajících práv. Tento režim je ponechán jen pro experimentální osobní výzkum.")
     else:
-        st.caption("CSV režim nevolá žádný externí cenový API endpoint. Ujisti se, že máš právo data použít a že historie pokrývá celé testované období.")
+        st.caption("CSV režim nevolá žádný externí cenový API endpoint. Použij jen data, pro která máš práva k analýze a veřejnému zobrazení.")
     st.divider()
     st.subheader("SEC fundamenty")
     sec_email = st.text_input("Kontaktní e-mail pro SEC EDGAR", value=_secret_email(),
@@ -212,11 +227,16 @@ with st.sidebar:
         st.session_state.pop("backtest_result", None)
         st.rerun()
 
-universe = [x for x in dict.fromkeys(s.strip().upper() for s in ticker_text.split(",") if s.strip()) if x not in EXCLUDED_FUNDS]
+universe = (
+    [x for x in DEFAULT_DEMO_UNIVERSE.split(",") if x]
+    if is_demo_mode
+    else [x for x in dict.fromkeys(s.strip().upper() for s in ticker_text.split(",") if s.strip()) if x not in EXCLUDED_FUNDS]
+)
+benchmark_ticker = "SIM_BENCHMARK" if is_demo_mode else "SPY"
 if len(universe) < 2:
     st.error("Zadej alespoň dvě akcie. Benchmarková ETF SPY/ACWI/QQQ/VTI se automaticky vyřazují z investičního univerza.")
     st.stop()
-symbols = tuple(dict.fromkeys(universe + list(BENCHMARKS)))
+symbols = tuple(dict.fromkeys(universe + [benchmark_ticker]))
 sentiment_df = _signals(sentiment_upload, "Sentiment score")
 revision_df = _signals(revision_upload, "Revision score")
 sentiment_latest = latest_signals(sentiment_df, "Sentiment score") if sentiment_df is not None else {}
@@ -230,7 +250,9 @@ for ticker in set(sentiment_latest) | set(revision_latest):
 
 with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     try:
-        if price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
+        if is_demo_mode:
+            price_data_all, price_report = generate_demo_market_data(list(symbols), period)
+        elif price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
             if price_csv_upload is None:
                 st.info("Vybraný je CSV režim. Nahraj historii OHLCV v levém panelu a případně uprav investiční univerzum tak, aby odpovídalo tickerům v souboru.")
                 st.stop()
@@ -250,7 +272,7 @@ if not prices:
 
 # ------------------------------- SEC facts --------------------------------
 fundamentals, sec_bundles, sec_errors = {}, {}, []
-valid_email = "@" in sec_email and "." in sec_email.split("@")[-1]
+valid_email = (not is_demo_mode) and "@" in sec_email and "." in sec_email.split("@")[-1]
 if valid_email:
     try:
         sec_map = cached_sec_map(sec_email.strip())
@@ -277,7 +299,10 @@ if valid_email:
     except Exception as exc:
         st.warning(f"SEC EDGAR se nepodařilo načíst: {type(exc).__name__}: {exc}. Screener poběží v režimu cenových dat.")
 else:
-    st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
+    if is_demo_mode:
+        st.sidebar.info("SEC fundamenty jsou v demo režimu vypnuté, protože ceny jsou syntetické. Pro skutečný research přepni na vlastní/licencované cenové CSV a zadej SEC kontaktní e-mail.")
+    else:
+        st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
 
 screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
 if screener.empty:
@@ -415,7 +440,7 @@ with tab_strategy:
     compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants")
     saved = st.session_state.get("backtest_result")
     if run_backtest:
-        benchmark_series = _daily_returns(price_data_all["SPY"]) if "SPY" in price_data_all else None
+        benchmark_series = _daily_returns(price_data_all[benchmark_ticker]) if benchmark_ticker in price_data_all else None
         fund_histories, optional_histories = {}, {}
         try:
             with st.spinner("Počítám historické signály, point-in-time fundamenty a rebalancování…"):
@@ -514,7 +539,7 @@ with tab_strategy:
         equity_fig = go.Figure()
         equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Equity"],name="Strategie",line=dict(width=2.5,color="#72e0c1")))
         if "Benchmark equity" in curve:
-            equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Benchmark equity"],name="Benchmark SPY",line=dict(width=1.7,color="#f6bd60")))
+            equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Benchmark equity"],name=f"Benchmark {benchmark_ticker}",line=dict(width=1.7,color="#f6bd60")))
         equity_fig.update_layout(template="plotly_dark",title="Růst modelového kapitálu",height=410,
             margin=dict(l=10,r=10,t=45,b=10),paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",hovermode="x unified")
         st.plotly_chart(equity_fig, width="stretch")
