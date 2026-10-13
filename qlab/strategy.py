@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from qlab.universe import universe_members_asof
+
 
 def _num(series):
     return pd.to_numeric(series, errors="coerce").astype(float)
@@ -375,9 +377,13 @@ def _build_monthly_cross_section(
     fundamentals_history: dict[str, pd.DataFrame] | None,
     optional_history: dict[str, pd.DataFrame] | None,
     indicator_cache: dict[str, pd.DataFrame] | None = None,
+    universe_history: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     rows = []
+    active_tickers = universe_members_asof(universe_history, signal_date)
     for ticker, frame in prices.items():
+        if active_tickers is not None and ticker not in active_tickers:
+            continue
         daily = (indicator_cache or {}).get(ticker)
         if daily is None:
             daily = calculate_indicators(frame)
@@ -423,6 +429,7 @@ def _precompute_monthly_cross_sections(
     fundamentals_history: dict[str, pd.DataFrame] | None = None,
     optional_history: dict[str, pd.DataFrame] | None = None,
     indicator_cache: dict[str, pd.DataFrame] | None = None,
+    universe_history: pd.DataFrame | None = None,
 ) -> dict[pd.Timestamp, pd.DataFrame]:
     """Score each point-in-time month once when evaluating multiple parameter candidates.
 
@@ -448,7 +455,8 @@ def _precompute_monthly_cross_sections(
     for i in range(12, len(monthly) - 1):
         signal_date = monthly.index[i]
         out[pd.Timestamp(signal_date)] = _build_monthly_cross_section(
-            prices, signal_date, fundamentals_history, optional_history, indicator_cache=cache
+            prices, signal_date, fundamentals_history, optional_history,
+            indicator_cache=cache, universe_history=universe_history
         )
     return out
 
@@ -472,6 +480,7 @@ def _prepare_shared_backtest_kwargs(
             fundamentals_history=fundamentals,
             optional_history=optional,
             indicator_cache=indicators,
+            universe_history=prepared.get("universe_history"),
         )
     return prepared
 
@@ -642,6 +651,7 @@ def run_monthly_backtest(
     evaluation_end_date: pd.Timestamp | str | None = None,
     precomputed_indicators: dict[str, pd.DataFrame] | None = None,
     precomputed_cross_sections: dict[pd.Timestamp, pd.DataFrame] | None = None,
+    universe_history: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -729,7 +739,8 @@ def run_monthly_backtest(
         cross = cached_cross.copy(deep=True) if cached_cross is not None else _build_monthly_cross_section(
             prices, decision_date,
             fundamentals_history if use_fundamentals else None,
-            optional_history, indicator_cache=indicator_cache
+            optional_history, indicator_cache=indicator_cache,
+            universe_history=universe_history
         )
         if cross.empty:
             continue
