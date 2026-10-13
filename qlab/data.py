@@ -13,6 +13,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import requests
+import time
 import yfinance as yf
 
 
@@ -153,9 +154,29 @@ def _sec_get_json(url: str, email: str) -> dict[str, Any]:
         "Accept-Encoding": "gzip, deflate",
         "Accept": "application/json",
     }
-    response = requests.get(url, headers=headers, timeout=25)
-    response.raise_for_status()
-    return response.json()
+    last_error = None
+    for attempt in range(4):
+        try:
+            response = requests.get(url, headers=headers, timeout=25)
+            if response.status_code == 429 or 500 <= response.status_code < 600:
+                retry_after = response.headers.get("Retry-After", "")
+                try:
+                    wait = min(8.0, max(0.5, float(retry_after)))
+                except (TypeError, ValueError):
+                    wait = min(8.0, 0.5 * (2 ** attempt))
+                if attempt < 3:
+                    time.sleep(wait)
+                    continue
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= 3:
+                break
+            time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"SEC request failed without a response: {url}")
 
 
 def load_sec_ticker_map(email: str) -> dict[str, dict[str, Any]]:
