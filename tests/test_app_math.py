@@ -219,3 +219,21 @@ def test_empty_or_invalid_price_frame_is_not_accepted_as_data():
     assert empty.empty
     raw = pd.DataFrame({"Volume": [100, 200]}, index=pd.date_range("2025-01-01", periods=2))
     assert _extract_ticker_frame(raw, "AAA", ["AAA"]).empty
+
+
+def test_sec_fact_filed_on_decision_date_is_deferred_to_avoid_close_time_leakage():
+    from qlab.data import _annual_series
+
+    facts = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {"units": {"USD": [
+                    {"start":"2021-01-01","end":"2021-12-31","val":100,"filed":"2022-02-15","form":"10-K"},
+                    {"start":"2022-01-01","end":"2022-12-31","val":150,"filed":"2023-02-15","form":"10-K"},
+                ]}}
+            }
+        }
+    }
+    result = _annual_series(facts, ["Revenues"], "2023-02-15")
+    assert len(result) == 1
+    assert result.iloc[0] == 100
