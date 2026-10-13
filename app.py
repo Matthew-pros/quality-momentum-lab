@@ -1122,25 +1122,29 @@ with tab_valuation:
 with tab_portfolio:
     st.subheader("ATR position sizing a evidence lotů")
     st.markdown("Kalkulátor převádí maximální riziko na počet kusů při zadaném ATR stopu a limitech expozice. Nezadává pokyny brokerovi.")
-    candidates = screener.sort_values("Fundamental/composite score",ascending=False,na_position="last")
-    suggested = candidates.loc[candidates["Trend OK"],"Ticker"].head(min(top_n,5)).tolist()
-    picked = st.multiselect("Tituly ke kalkulaci",screener["Ticker"].tolist(),default=suggested)
-    sizes = calculate_position_sizes(screener,picked,capital,risk_budget_pct=risk_budget_pct,
-        stop_atr_multiple=stop_atr,max_position_pct=max_position_pct,max_total_exposure_pct=max_exposure_pct,
-        max_total_risk_pct=max_total_risk_pct)
-    if sizes.empty:
-        st.info("Vyber akcie s dostupnou cenou a ATR(20).")
+    if not currency_ok:
+        st.warning("Plán pozic je vypnutý: kapitál a hodnoty jsou vedeny v USD, proto je nutné dodat USD ceny nebo výslovně potvrdit společnou USD bázi všech řad.")
     else:
-        a,b,c = st.columns(3)
-        a.metric("Modelová alokace",f"${sizes['Position value'].sum():,.0f}")
-        b.metric("Expozice kapitálu",f"{sizes['Weight %'].sum():.1f}%")
-        risk_used = float(sizes["Initial risk budget"].sum())
-        c.metric("Počáteční riziko portfolia",f"${risk_used:,.0f}",f"{risk_used / capital * 100:.2f}% z kapitálu (limit {max_total_risk_pct:.1f}%)")
-        st.dataframe(sizes,width="stretch",hide_index=True,column_config={
-            "Weight %":st.column_config.NumberColumn(format="%.2f%%"),"Price":st.column_config.NumberColumn(format="%.2f"),
-            "ATR20":st.column_config.NumberColumn(format="%.2f"),"Provisional stop":st.column_config.NumberColumn(format="%.2f"),
-            "Position value":st.column_config.NumberColumn(format="$%.2f"),"Initial risk budget":st.column_config.NumberColumn(format="$%.2f")})
-        st.download_button("Stáhnout plán pozic CSV",sizes.to_csv(index=False).encode("utf-8"),"position_sizing.csv","text/csv")
+        candidates = screener.sort_values("Fundamental/composite score",ascending=False,na_position="last")
+        suggested = candidates.loc[candidates["Trend OK"],"Ticker"].head(min(top_n,5)).tolist()
+        picked = st.multiselect("Tituly ke kalkulaci",screener["Ticker"].tolist(),default=suggested)
+        sizes = calculate_position_sizes(screener,picked,capital,risk_budget_pct=risk_budget_pct,
+            stop_atr_multiple=stop_atr,max_position_pct=max_position_pct,max_total_exposure_pct=max_exposure_pct,
+            max_total_risk_pct=max_total_risk_pct)
+        if sizes.empty:
+            st.info("Vyber akcie s dostupnou cenou a ATR(20).")
+        else:
+            a,b,c = st.columns(3)
+            a.metric("Modelová alokace",f"${sizes['Position value'].sum():,.0f}")
+            b.metric("Expozice kapitálu",f"{sizes['Weight %'].sum():.1f}%")
+            risk_used = float(sizes["Initial risk budget"].sum())
+            c.metric("Počáteční riziko portfolia",f"${risk_used:,.0f}",f"{risk_used / capital * 100:.2f}% z kapitálu (limit {max_total_risk_pct:.1f}%)")
+            st.dataframe(sizes,width="stretch",hide_index=True,column_config={
+                "Weight %":st.column_config.NumberColumn(format="%.2f%%"),"Price":st.column_config.NumberColumn(format="%.2f"),
+                "ATR20":st.column_config.NumberColumn(format="%.2f"),"Provisional stop":st.column_config.NumberColumn(format="%.2f"),
+                "Position value":st.column_config.NumberColumn(format="$%.2f"),"Initial risk budget":st.column_config.NumberColumn(format="$%.2f")})
+            st.download_button("Stáhnout plán pozic CSV",sizes.to_csv(index=False).encode("utf-8"),"position_sizing.csv","text/csv")
+    
     st.divider()
     st.markdown("#### FIFO tax-lot ledger")
     st.write("Nahraj historii transakcí. FIFO páruje prodeje s nejstaršími nákupními loty, započítá dodané poplatky a ukáže realizovaný zisk/ztrátu, hrubé prodeje i zbylé loty.")
