@@ -353,7 +353,7 @@ def test_market_quality_report_flags_stale_invalid_and_extreme_prices():
 
     index = pd.to_datetime(["2026-09-20", "2026-09-21", "2026-09-22"])
     frame = pd.DataFrame({
-        "Open": [10.0, 10.0, 0.0], "High": [11.0, 11.0, 0.0],
+        "Open": [10.0, 10.0, 0.0], "High": [11.0, 20.0, 0.0],
         "Low": [9.0, 9.0, 0.0], "Close": [10.0, 19.0, 0.0],
         "Adj Close": [10.0, 19.0, 0.0],
     }, index=index)
