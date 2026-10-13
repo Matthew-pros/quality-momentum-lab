@@ -686,7 +686,12 @@ with tab_data:
         "Ticker", "Status", "Quality", "Rows", "First date", "Last date",
         "Calendar days stale", "Missing %", "Invalid price rows", "Max abs daily return %", "Message"
     ] if c in price_report.columns]
-    st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430)
+    st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430, column_config={
+        "Calendar days stale": st.column_config.NumberColumn(format="%.0f"),
+        "Missing %": st.column_config.NumberColumn(format="%.2f%%"),
+        "Invalid price rows": st.column_config.NumberColumn(format="%.0f"),
+        "Max abs daily return %": st.column_config.NumberColumn(format="%.2f%%"),
+    })
     st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
     combined = _download_frame(price_data_all)
     if not combined.empty:
@@ -709,7 +714,7 @@ with tab_data:
         st.error("Některé cenové řady chybí. Backtest se nesmí používat bez vyřešení dat.")
     elif "Quality" in price_report and price_report["Quality"].eq("REVIEW").any():
         flagged = price_report.loc[price_report["Quality"].eq("REVIEW"), "Ticker"].tolist()
-        st.warning("Některé řady vyžadují kontrolu (stáří dat, podezřelý pohyb nebo neplatné hodnoty): " + ", ".join(flagged))
+        st.warning("Některé řady vyžadují kontrolu (stáří dat, podezřelý pohyb nebo neplatné hodnoty): " + ", ".join(flagged) + ". Neplatné cenové řádky jsou z výpočtů vyřazeny; velké pohyby mohou být reálné a nejsou automaticky odstraněny.")
     else:
         st.success("V základní automatické kontrole nejsou zjištěné chybějící ani podezřelé cenové řady.")
     st.caption(f"Načteno v tomto běhu · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
