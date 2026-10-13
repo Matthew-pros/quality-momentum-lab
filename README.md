@@ -11,7 +11,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 - **Optional revisions and sentiment:** timestamped 0–100 CSV inputs, aligned point-in-time to decision dates; no fake default sentiment.
 - **Monthly backtest:** score-driven top-N portfolio, trend/ADX/breakout gates, score hysteresis, limit to replacements per month, transaction costs on gross traded notional, equity curve, drawdown/volatility/Sharpe and rebalance audit.
 - **Risk sizing:** long-only quantity planner using ATR stop distance, risk budget, max position and total exposure caps.
-- **FIFO lot ledger:** buys/sells matched chronologically, purchase/sale fees allocated, realized matches and remaining inventory exports.
+- **FIFO lot ledger:** buys/sells matched chronologically, purchase/sale fees allocated, realized matches and remaining inventory exports. For CZK-only transactions it flags potentially relevant Czech securities exemptions (annual gross proceeds test / three-year holding test) based on 2026 official guidance; it does not calculate statutory tax due or handle non-CZK FX automatically.
 - **Automated regression checks:** syntax compilation plus synthetic tests for indicator units, future-data separation, hysteresis, signal timestamps and FIFO accounting.
 
 ## Important limits (not a claim of production-grade investment performance)
