@@ -148,10 +148,9 @@ with st.sidebar:
         [
             "Demo — syntetická data (bez externího API)",
             "Import OHLCV CSV (vlastní/licencovaná data)",
-            "Yahoo Finance / yfinance (experimentální)",
         ],
         index=0,
-        help="Veřejný režim se spouští nad syntetickými daty, aby nepublikoval tržní data bez ověřené licence. Pro skutečné ceny nahraj licencované CSV. Yahoo je pouze experimentální zdroj a nesmí být použit pro veřejné zobrazování bez příslušných práv."
+        help="Veřejný režim se spouští nad syntetickými daty, aby nepublikoval tržní data bez ověřené licence. Pro skutečné ceny nahraj CSV ze zdroje, který dovoluje veřejné zobrazení."
     )
     is_demo_mode = price_provider.startswith("Demo")
     ticker_text = st.text_area(
@@ -172,8 +171,6 @@ with st.sidebar:
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
     if is_demo_mode:
         st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
-    elif price_provider.startswith("Yahoo"):
-        st.warning("Yahoo Finance je neoficiální zdroj; jeho vlastní nápověda zakazuje redistribuci zobrazovaných informací bez odpovídajících práv. Tento režim je ponechán jen pro experimentální osobní výzkum.")
     else:
         st.caption("CSV režim nevolá žádný externí cenový API endpoint. Použij jen data, pro která máš práva k analýze a veřejnému zobrazení.")
     st.divider()
@@ -261,7 +258,7 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
                 expected_tickers=list(symbols),
             )
         else:
-            price_data_all, price_report = cached_market_data(symbols, period)
+            raise ValueError("Nepodporovaný zdroj cenových dat. Zvol demo nebo import OHLCV CSV.")
     except Exception as exc:
         st.error(f"Načítání cen selhalo: {type(exc).__name__}: {exc}")
         st.stop()
@@ -840,7 +837,7 @@ with tab_method:
         Fundamentální údaje z SEC se filtrují podle filed date a historické rozhodnutí nepoužije výkaz zveřejněný později. Tím se ale neřeší survivorship bias současného tickerového seznamu.
 
         ### Omezení
-        - Yahoo Finance přes yfinance je neoficiální rozhraní; ověř podmínky poskytovatele. Data nejsou licencovaným produkčním feedem.
+        - Veřejná aplikace nepoužívá tržní API automaticky. Výchozí data jsou syntetická; pro reálné ceny nahraj pouze CSV, jehož licence dovoluje veřejné zobrazení.
         - SEC Company Facts pokrývá reportující emitenty a standardizované XBRL tagy; metriky se mohou lišit účetními standardy a dostupností tagu.
         - P/E a FCF yield používají hrubý odhad tržní kapitalizace z ceny a posledního nahlášeného počtu akcií. U ADR, duálních tříd a změn kapitálu mohou být chybné, proto jsou výchozím stavem mimo skóre.
         - Backtest používá současný seznam a není survivorship-bias-free. Měsíční close-to-close simulace není přesný broker fill model.
