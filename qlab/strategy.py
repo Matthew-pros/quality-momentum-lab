@@ -544,6 +544,10 @@ def run_monthly_backtest(
     previous_weights: dict[str, float] = {}
     # Persist the post-close high-water mark across rebalance months for existing positions.
     stop_high_water: dict[str, float] = {}
+    holding_entry_dates: dict[str, pd.Timestamp] = {}
+    closed_holding_days: list[int] = []
+    total_entry_events = 0
+    total_exit_events = 0
     # First usable decision requires at least 252 trading days of history in the daily indicators.
     start_idx = 12
     for i in range(start_idx, len(monthly) - 1):
@@ -579,6 +583,28 @@ def run_monthly_backtest(
         )
         row_return_date = monthly.index[i + 1]
         selected = sorted(picks)
+        selected_set = set(selected)
+        signal_exits = sorted(previous_holdings - selected_set)
+        new_entries = sorted(selected_set - previous_holdings)
+        low_at_signal = set(
+            cross.loc[cross["Below 50d low"].fillna(False).astype(bool), "Ticker"].astype(str)
+        )
+        signal_exit_details = []
+        for ticker in signal_exits:
+            entry_date = holding_entry_dates.pop(ticker, decision_date)
+            held_days = max(0, int((pd.Timestamp(decision_date) - pd.Timestamp(entry_date)).days))
+            closed_holding_days.append(held_days)
+            total_exit_events += 1
+            if ticker in low_at_signal and stop_mode == "Month-end 50-day low":
+                reason = "Month-end 50-day low"
+            elif ticker in low_at_signal and stop_mode in {"Daily 50-day low", "ATR + daily 50-day low"}:
+                reason = "Close below prior 50-day low at rebalance"
+            else:
+                reason = "Rebalance / eligibility"
+            signal_exit_details.append(f"{ticker}:{reason}:{held_days}d")
+        for ticker in new_entries:
+            holding_entry_dates[ticker] = pd.Timestamp(decision_date)
+            total_entry_events += 1
         next_returns = monthly_returns.loc[row_return_date, selected] if selected else pd.Series(dtype=float)
         new_weights = _target_weights(
             selected, cross, method=weighting_method, max_position_weight=max_position_weight
@@ -629,6 +655,14 @@ def run_monthly_backtest(
 
         gross_return = float(sum(new_weights.get(ticker, 0.0) * ticker_returns[ticker] for ticker in selected)) if selected else 0.0
         stopped = {ticker for ticker in selected if ticker_exit_reason[ticker] != "HOLD"}
+        stop_exit_details = []
+        for ticker in sorted(stopped):
+            entry_date = holding_entry_dates.pop(ticker, decision_date)
+            exit_date = pd.Timestamp(ticker_exit_date[ticker]) if ticker_exit_date[ticker] else row_return_date
+            held_days = max(0, int((exit_date - pd.Timestamp(entry_date)).days))
+            closed_holding_days.append(held_days)
+            total_exit_events += 1
+            stop_exit_details.append(f"{ticker}:{ticker_exit_reason[ticker]}:{held_days}d")
         # A stop is a new sell trade during the month; charge costs on the estimated
         # market value actually liquidated, in addition to any rebalance trades.
         stop_turnover = sum(
@@ -657,8 +691,12 @@ def run_monthly_backtest(
             "Equity": equity,
             "Holdings": ", ".join(selected),
             "Number of holdings": len(selected),
+            "Entry events": len(new_entries),
+            "Exit events": len(signal_exits) + len(stopped),
+            "New entries": ", ".join(new_entries),
+            "Signal exits": " | ".join(signal_exit_details),
             "Stops triggered": len(stopped),
-            "Stop exits": ", ".join(f"{ticker}:{ticker_exit_reason[ticker]}" for ticker in sorted(stopped)),
+            "Stop exits": " | ".join(stop_exit_details),
             "Stop dates": ", ".join(f"{ticker}:{ticker_exit_date[ticker]}" for ticker in sorted(stopped) if ticker_exit_date[ticker]),
             "Gross exposure %": effective_exposure,
             "Target weights": ", ".join(f"{ticker}:{new_weights[ticker]:.3f}" for ticker in selected),
@@ -679,7 +717,11 @@ def run_monthly_backtest(
             "Ticker returns": ", ".join(f"{ticker}:{ticker_returns[ticker]:.4f}" for ticker in selected),
             "Exit rules": ", ".join(f"{ticker}:{ticker_exit_reason[ticker]}" for ticker in selected),
             "Stop dates": ", ".join(f"{ticker}:{ticker_exit_date[ticker]}" for ticker in selected if ticker_exit_date[ticker]),
+            "Entry events": len(new_entries),
+            "New entries": ", ".join(new_entries),
+            "Signal exits": " | ".join(signal_exit_details),
             "Stops triggered": len(stopped),
+            "Stop exits": " | ".join(stop_exit_details),
             "Stop mode": stop_mode,
             "Weighting method": weighting_method,
             "Eligible names": ", ".join(sorted(eligible[eligible].index)),
@@ -716,6 +758,10 @@ def run_monthly_backtest(
         "Total transaction costs %": float(curve["Transaction cost"].sum() * 100),
         "Average monthly turnover %": float(curve["Gross turnover"].mean() * 100),
         "Average gross exposure %": float(curve["Gross exposure %"].mean()),
+        "Entry events": int(total_entry_events),
+        "Exit events": int(total_exit_events),
+        "Average holding days (closed positions)": float(np.mean(closed_holding_days)) if closed_holding_days else np.nan,
+        "Median holding days (closed positions)": float(np.median(closed_holding_days)) if closed_holding_days else np.nan,
     }
     if benchmark is not None and not benchmark.empty:
         bench = benchmark.dropna().resample("ME").last().pct_change(fill_method=None)
