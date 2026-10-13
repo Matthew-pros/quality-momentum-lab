@@ -5,8 +5,8 @@ A Streamlit research environment for screening equities, reviewing price and fun
 ## What the app implements
 
 - **Price ingestion:** one non-threaded Yahoo batch with sequential retry for partial failures, or import a user-supplied/licensed long-format OHLCV CSV; per-ticker quality flags for stale data, invalid prices and extreme daily moves.
-- **Technical factors:** momentum 12–1M and 6–1M, MA50/MA200 trend, MA200 slope, ADX(14), ATR(20), 20-/55-session breakout and 50-session low trigger.
-- **Official filing fundamentals:** SEC EDGAR Company Facts for supported filers, with every fact filtered by its filing date for as-of snapshots. Enter a contact email in the sidebar or set the Streamlit secret `SEC_CONTACT_EMAIL`.
+- **Technical factors:** momentum 12–1M and 6–1M, MA50/MA200 trend, MA200 slope, ADX(14), ATR(20), 20-/55-session breakout and 50-session low trigger. Indicators and daily stop logic use adjusted OHLC where available to avoid split-driven false jumps; latest ATR is converted to the quoted-price scale for share sizing.
+- **Official filing fundamentals:** SEC EDGAR Company Facts for supported filers, with every fact filtered by its filing date for as-of snapshots; separate SEC submissions metadata supplies SIC codes/descriptions and a coarse SIC major-industry group. It is not a GICS/ICB sector feed. Enter a contact email in the sidebar or set the Streamlit secret `SEC_CONTACT_EMAIL`.
 - **Explicit data coverage:** missing metrics stay missing; the app does not manufacture neutral 50-point fundamental scores.
 - **Optional revisions and sentiment:** timestamped 0–100 CSV inputs, aligned point-in-time to decision dates; no fake default sentiment.
 - **Monthly backtest:** score-driven top-N portfolio, trend/ADX/breakout gates, score hysteresis, limit to replacements per month, equal-weight or inverse-ATR weights, transaction costs on gross traded notional, equity curve, drawdown/volatility/Sharpe, a rebalance audit and transaction-cost sensitivity.
@@ -24,7 +24,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 3. **Valuation estimates:** P/E and FCF yield based on current price × the latest reported shares outstanding can be materially wrong for ADRs, dual-class companies or stale share counts. These estimates are excluded from scoring by default.
 4. **Backtest universe:** the entered symbol list is a current user-selected universe, not a point-in-time, survivorship-bias-free database. The engine stops instead of silently dropping held securities with missing future returns.
 5. **Execution realism:** the monthly prototype applies turnover costs to close-to-close returns; it does not model exact opening fills, bid/ask spreads, market impact, every corporate action or FX conversion.
-6. **Tax:** the FIFO tool is a lot ledger with year-specific preliminary flags. For CZK-only entries, it can mark potential value-test/time-test cases and warn about historic-year 40m limits or a possible notification duty for exempt income above CZK 5m; it is not a Czech tax calculation and does not apply all exemptions, tax rates, loss offsets, inheritance/corporate-action rules, or FX conversion.
+6. **Tax:** the FIFO tool is a lot ledger with year-specific preliminary flags. For CZK-only entries, it can mark potential value-test/time-test cases and warn about the historic-year CZK 40m cap; the potential CZK 5m §38v notification check is evaluated per original exempt sale transaction, even if FIFO divides it among acquisition lots. It is not a Czech tax calculation and does not apply all exemptions, tax rates, loss offsets, inheritance/corporate-action rules, or FX conversion.
 7. **HMM and external sentiment:** HMM remains deferred until simpler features pass out-of-sample tests. External sentiment/revision signals are accepted only with timestamps and source metadata.
 
 Do not interpret scores as forecasts or backtest performance as expected future returns.
