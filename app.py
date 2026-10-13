@@ -455,10 +455,10 @@ else:
         st.sidebar.info("Fundamentální vrstva je vypnutá. Zadej kontaktní e-mail pro načtení oficiálních SEC EDGAR výkazů. Žádné fundamentální údaje se nedoplňují skóre 50.")
 
 all_screener = prepare_screener(prices, fundamentals, optional_signals=optional_latest, allow_estimated_valuation=use_estimated_value)
-all_screener["Currency"] = all_screener["Ticker"].map(currency_by_ticker).fillna("UNKNOWN")
 if all_screener.empty:
     st.error("Z cenových dat se nepodařilo vytvořit screener.")
     st.stop()
+all_screener["Currency"] = all_screener["Ticker"].map(currency_by_ticker).fillna("UNKNOWN")
 sector_map_all = all_screener.set_index("Ticker")["SIC group"].fillna("Unclassified").astype(str).to_dict() if "SIC group" in all_screener else {}
 screener = all_screener
 membership_screener_is_current = universe_history is None
