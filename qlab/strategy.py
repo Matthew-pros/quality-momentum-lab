@@ -1246,6 +1246,312 @@ def train_select_holdout_search(
     return table.sort_values(["Selected by train", selection_metric, "Train CAGR"], ascending=[False, False, False], na_position="last"), best_config, holdout, holdout_metrics
 
 
+def _apply_terminal_liquidation_cost(
+    curve: pd.DataFrame,
+    initial: float,
+    cost_bps: float,
+) -> pd.DataFrame:
+    """Charge the cost of liquidating any residual end-of-test exposure."""
+    if curve is None or curve.empty:
+        return curve
+    out = curve.copy()
+    if "Gross exposure %" not in out or "Equity" not in out:
+        return out
+    exposure = max(0.0, float(pd.to_numeric(pd.Series([out.iloc[-1]["Gross exposure %"]]), errors="coerce").fillna(0).iloc[0]) / 100)
+    if exposure <= 0 or cost_bps <= 0:
+        out.loc[out.index[-1], "Terminal liquidation turnover"] = 0.0
+        out.loc[out.index[-1], "Terminal liquidation cost"] = 0.0
+        return out
+    end_equity = float(out.iloc[-1]["Equity"])
+    before_equity = float(initial) if len(out) == 1 else float(out.iloc[-2]["Equity"])
+    if end_equity <= 0 or before_equity <= 0:
+        out.loc[out.index[-1], "Terminal liquidation turnover"] = exposure
+        out.loc[out.index[-1], "Terminal liquidation cost"] = 0.0
+        return out
+    cash_cost = end_equity * exposure * float(cost_bps) / 10_000
+    final_equity = max(0.0, end_equity - cash_cost)
+    extra_return_cost = cash_cost / before_equity
+    last = out.index[-1]
+    out.loc[last, "Equity"] = final_equity
+    out.loc[last, "Net return"] = final_equity / before_equity - 1
+    if "Transaction cost" in out:
+        out.loc[last, "Transaction cost"] = float(out.loc[last, "Transaction cost"]) + extra_return_cost
+    if "Gross turnover" in out:
+        out.loc[last, "Gross turnover"] = float(out.loc[last, "Gross turnover"]) + exposure
+    if "Estimated cost (bps of portfolio)" in out:
+        out.loc[last, "Estimated cost (bps of portfolio)"] = (
+            float(out.loc[last, "Estimated cost (bps of portfolio)"]) + extra_return_cost * 10_000
+        )
+    out.loc[last, "Terminal liquidation turnover"] = exposure
+    out.loc[last, "Terminal liquidation cost"] = extra_return_cost
+    return out
+
+
+def expanding_walk_forward(
+    prices: dict[str, pd.DataFrame],
+    min_score_candidates: tuple[float, ...] = (25.0, 35.0, 45.0),
+    hysteresis_candidates: tuple[float, ...] = (3.0, 7.0, 12.0),
+    train_months: int = 24,
+    test_months: int = 6,
+    step_months: int = 6,
+    min_train_months: int = 18,
+    **backtest_kwargs,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float]]:
+    """Run an expanding-window walk-forward search with isolated, flat-start OOS episodes.
+
+    Each fold chooses min-score and hysteresis solely from past return history. The
+    selected configuration is then run on the following test segment with the portfolio
+    reset to cash; entry/rebalance/stop costs are applied, and any remaining end exposure
+    is liquidated with modelled costs. Fold test returns do not overlap. This yields a
+    conservative sequence of independent OOS episodes, not a broker-execution simulation.
+    """
+    if not prices:
+        raise ValueError("Price history is empty.")
+    for name, value in [("train_months", train_months), ("test_months", test_months), ("step_months", step_months), ("min_train_months", min_train_months)]:
+        if not isinstance(value, (int, np.integer)) or isinstance(value, bool) or value < 1:
+            raise ValueError(f"{name} must be a positive integer.")
+    if train_months < min_train_months:
+        raise ValueError("train_months must be at least min_train_months.")
+    if test_months < 3:
+        raise ValueError("test_months must be at least 3.")
+    if step_months < test_months:
+        raise ValueError("step_months must be >= test_months so out-of-sample returns do not overlap.")
+    score_values = sorted(set(float(value) for value in min_score_candidates))
+    hysteresis_values = sorted(set(float(value) for value in hysteresis_candidates))
+    if not score_values or any(not np.isfinite(value) or value < 0 or value > 100 for value in score_values):
+        raise ValueError("min_score_candidates must be finite values from 0 to 100.")
+    if not hysteresis_values or any(not np.isfinite(value) or value < 0 or value > 100 for value in hysteresis_values):
+        raise ValueError("hysteresis_candidates must be finite, non-negative values.")
+    cost_bps = float(backtest_kwargs.get("cost_bps", 15.0))
+    if not np.isfinite(cost_bps) or cost_bps < 0:
+        raise ValueError("cost_bps must be finite and non-negative.")
+
+    adjusted: dict[str, pd.Series] = {}
+    for ticker, frame in prices.items():
+        if frame is None or frame.empty:
+            continue
+        source_col = "Adj Close" if "Adj Close" in frame else "Close"
+        series = _num(frame[source_col]).dropna()
+        if len(series) >= 300:
+            adjusted[ticker] = series
+    if len(adjusted) < 2:
+        raise ValueError("Need at least two usable price histories with 300+ observations.")
+    monthly = pd.DataFrame(adjusted).sort_index().resample("ME").last().dropna(how="all")
+    if len(monthly) < 13 + train_months + test_months:
+        raise ValueError(
+            f"Insufficient monthly history for expanding walk-forward: need approximately "
+            f"{13 + train_months + test_months} month-end observations, received {len(monthly)}."
+        )
+
+    base_initial = float(backtest_kwargs.get("initial", 10_000))
+    start_idx = 12  # match the 12-month burn-in used by run_monthly_backtest
+    fold_candidates: list[dict[str, object]] = []
+    fold_rows: list[dict[str, object]] = []
+    oos_segments: list[pd.DataFrame] = []
+    fold_number = 0
+    for test_start_idx in range(start_idx + train_months, len(monthly)):
+        if (test_start_idx - (start_idx + train_months)) % step_months != 0:
+            continue
+        if test_start_idx + test_months > len(monthly) - 1:
+            break
+        fold_number += 1
+        train_end_decision = monthly.index[test_start_idx - 1]
+        test_start_decision = monthly.index[test_start_idx]
+        test_end_decision = monthly.index[test_start_idx + test_months - 1]
+        fold_table_rows: list[dict[str, object]] = []
+        viable: list[dict[str, object]] = []
+        for score in score_values:
+            for hyst in hysteresis_values:
+                record: dict[str, object] = {
+                    "Fold": fold_number,
+                    "Train end": train_end_decision,
+                    "Min score": score,
+                    "Hysteresis": hyst,
+                    "Status": "OK",
+                    "Train months": 0,
+                    "Train CAGR": np.nan,
+                    "Train Sharpe": np.nan,
+                    "Train max drawdown": np.nan,
+                    "Train turnover %": np.nan,
+                    "Selected by train": False,
+                }
+                kwargs = dict(backtest_kwargs)
+                kwargs.update({
+                    "min_score": score,
+                    "hysteresis": hyst,
+                    "evaluation_start_date": None,
+                    "evaluation_end_date": train_end_decision,
+                })
+                try:
+                    train_curve, _, _ = run_monthly_backtest(prices=prices, **kwargs)
+                    if train_curve is None or train_curve.empty or len(train_curve) != test_start_idx - start_idx:
+                        record["Status"] = "Incomparable training coverage"
+                        fold_table_rows.append(record)
+                        continue
+                    train_curve = _apply_terminal_liquidation_cost(
+                        train_curve, initial=base_initial, cost_bps=cost_bps
+                    )
+                    train_returns = pd.to_numeric(train_curve["Net return"], errors="coerce")
+                    if train_returns.isna().any() or (1 + train_returns).le(0).any():
+                        record["Status"] = "Invalid train returns"
+                        fold_table_rows.append(record)
+                        continue
+                    factor = float(np.prod(1 + train_returns.to_numpy()))
+                    train_cagr = factor ** (12 / len(train_returns)) - 1
+                    train_vol = float(train_returns.std(ddof=1) * np.sqrt(12)) if len(train_returns) > 1 else np.nan
+                    train_sharpe = float(train_returns.mean() * 12 / train_vol) if np.isfinite(train_vol) and train_vol > 0 else np.nan
+                    wealth = np.r_[1.0, np.cumprod(1 + train_returns.to_numpy())]
+                    drawdown = wealth[1:] / np.maximum.accumulate(wealth)[1:] - 1
+                    record.update({
+                        "Train months": int(len(train_returns)),
+                        "Train CAGR": float(train_cagr),
+                        "Train Sharpe": float(train_sharpe),
+                        "Train max drawdown": float(np.min(drawdown)),
+                        "Train turnover %": float(pd.to_numeric(train_curve.get("Gross turnover", pd.Series(0, index=train_curve.index)), errors="coerce").mean() * 100),
+                    })
+                    viable.append(record)
+                except Exception as exc:
+                    record["Status"] = "Failed"
+                    record["Error"] = f"{type(exc).__name__}: {exc}"
+                fold_table_rows.append(record)
+
+        objective = "Train Sharpe"
+        eligible = [
+            row for row in viable
+            if pd.notna(row["Train Sharpe"]) and np.isfinite(float(row["Train Sharpe"]))
+        ]
+        if not eligible:
+            objective = "Train CAGR"
+            eligible = [
+                row for row in viable
+                if pd.notna(row["Train CAGR"]) and np.isfinite(float(row["Train CAGR"]))
+            ]
+        if not eligible:
+            raise ValueError(
+                f"Fold {fold_number} has no comparable parameter candidate with valid training metrics."
+            )
+        winner = sorted(
+            eligible,
+            key=lambda row: (
+                -float(row[objective]),
+                -float(row["Train CAGR"]),
+                float(row["Train turnover %"]),
+                float(row["Min score"]),
+                float(row["Hysteresis"]),
+            ),
+        )[0]
+        for row in fold_table_rows:
+            if row["Min score"] == winner["Min score"] and row["Hysteresis"] == winner["Hysteresis"] and row["Status"] == "OK":
+                row["Selected by train"] = True
+        fold_candidates.extend(fold_table_rows)
+
+        test_kwargs = dict(backtest_kwargs)
+        test_kwargs.update({
+            "min_score": float(winner["Min score"]),
+            "hysteresis": float(winner["Hysteresis"]),
+            "evaluation_start_date": test_start_decision,
+            "evaluation_end_date": test_end_decision,
+        })
+        test_curve, _, _ = run_monthly_backtest(prices=prices, **test_kwargs)
+        expected_test_dates = monthly.index[test_start_idx + 1:test_start_idx + test_months + 1]
+        if test_curve is None or len(test_curve) != test_months or not test_curve.index.equals(expected_test_dates):
+            actual = 0 if test_curve is None else len(test_curve)
+            raise ValueError(
+                f"Fold {fold_number} expected {test_months} non-overlapping OOS return months, "
+                f"but backtest returned {actual}."
+            )
+        test_curve = _apply_terminal_liquidation_cost(test_curve, base_initial, cost_bps)
+        test_curve["Fold"] = fold_number
+        test_curve["Selected min score"] = float(winner["Min score"])
+        test_curve["Selected hysteresis"] = float(winner["Hysteresis"])
+        test_returns = pd.to_numeric(test_curve["Net return"], errors="coerce")
+        if test_returns.isna().any() or (1 + test_returns).le(0).any():
+            raise ValueError(f"Fold {fold_number} has invalid OOS returns.")
+        factor = float(np.prod(1 + test_returns.to_numpy()))
+        test_cagr = factor ** (12 / len(test_returns)) - 1
+        test_vol = float(test_returns.std(ddof=1) * np.sqrt(12)) if len(test_returns) > 1 else np.nan
+        test_sharpe = float(test_returns.mean() * 12 / test_vol) if np.isfinite(test_vol) and test_vol > 0 else np.nan
+        wealth = np.r_[1.0, np.cumprod(1 + test_returns.to_numpy())]
+        drawdown = wealth[1:] / np.maximum.accumulate(wealth)[1:] - 1
+        benchmark_returns = pd.to_numeric(
+            test_curve.get("Benchmark return", pd.Series(index=test_curve.index, dtype=float)),
+            errors="coerce",
+        )
+        benchmark_good = benchmark_returns.dropna()
+        fold_rows.append({
+            "Fold": fold_number,
+            "Training end decision": train_end_decision,
+            "Test start decision": test_start_decision,
+            "OOS return start": test_curve.index[0],
+            "OOS return end": test_curve.index[-1],
+            "Train months": int(winner["Train months"]),
+            "Selected min score": float(winner["Min score"]),
+            "Selected hysteresis": float(winner["Hysteresis"]),
+            "Training objective": objective,
+            "Training score": float(winner[objective]),
+            "Train CAGR": float(winner["Train CAGR"]),
+            "Train Sharpe": float(winner["Train Sharpe"]) if pd.notna(winner["Train Sharpe"]) else np.nan,
+            "OOS months": int(len(test_curve)),
+            "OOS CAGR": float(test_cagr),
+            "OOS Sharpe": float(test_sharpe) if np.isfinite(test_sharpe) else np.nan,
+            "OOS max drawdown": float(np.min(drawdown)),
+            "OOS turnover %": float(pd.to_numeric(test_curve["Gross turnover"], errors="coerce").mean() * 100),
+            "Terminal liquidation turnover %": float(test_curve["Terminal liquidation turnover"].iloc[-1] * 100),
+            "OOS benchmark CAGR": (
+                float(np.prod(1 + benchmark_good.to_numpy()) ** (12 / len(benchmark_good)) - 1)
+                if len(benchmark_good) and np.prod(1 + benchmark_good.to_numpy()) > 0 else np.nan
+            ),
+        })
+        oos_segments.append(test_curve)
+
+    if not oos_segments:
+        raise ValueError(
+            f"Not enough history for an expanding walk-forward split with {train_months} training "
+            f"months and {test_months} test months. Use a longer history or smaller windows."
+        )
+    oos = pd.concat(oos_segments).sort_index()
+    if oos.index.duplicated().any():
+        raise ValueError("Walk-forward generated overlapping OOS return dates; choose step_months >= test_months.")
+    oos_returns = pd.to_numeric(oos["Net return"], errors="coerce")
+    oos["Equity"] = base_initial * (1 + oos_returns).cumprod()
+    benchmark_series = pd.to_numeric(oos.get("Benchmark return", pd.Series(index=oos.index, dtype=float)), errors="coerce")
+    if benchmark_series.notna().any():
+        oos["Benchmark equity"] = base_initial * (1 + benchmark_series.fillna(0)).cumprod()
+
+    oos_years = len(oos_returns) / 12
+    oos_factor = float(np.prod(1 + oos_returns.to_numpy()))
+    oos_vol = float(oos_returns.std(ddof=1) * np.sqrt(12)) if len(oos_returns) > 1 else np.nan
+    oos_sharpe = float(oos_returns.mean() * 12 / oos_vol) if np.isfinite(oos_vol) and oos_vol > 0 else np.nan
+    oos_wealth = np.r_[base_initial, oos["Equity"].to_numpy()]
+    oos_drawdown = oos_wealth[1:] / np.maximum.accumulate(oos_wealth)[1:] - 1
+    metrics: dict[str, float] = {
+        "OOS folds": float(len(fold_rows)),
+        "OOS months": float(len(oos)),
+        "OOS CAGR": float(oos_factor ** (1 / oos_years) - 1) if oos_years > 0 and oos_factor > 0 else np.nan,
+        "OOS volatility": float(oos_vol) if np.isfinite(oos_vol) else np.nan,
+        "OOS Sharpe (rf=0)": float(oos_sharpe) if np.isfinite(oos_sharpe) else np.nan,
+        "OOS max drawdown": float(np.min(oos_drawdown)),
+        "OOS final equity": float(oos["Equity"].iloc[-1]),
+        "OOS average turnover %": float(pd.to_numeric(oos["Gross turnover"], errors="coerce").mean() * 100),
+        "Terminal liquidation cost % of starting equity sum": float(pd.to_numeric(oos["Terminal liquidation cost"], errors="coerce").fillna(0).sum() * 100),
+    }
+    bench_good = benchmark_series.dropna()
+    if len(bench_good) and float(np.prod(1 + bench_good.to_numpy())) > 0:
+        metrics["OOS benchmark CAGR"] = float(np.prod(1 + bench_good.to_numpy()) ** (12 / len(bench_good)) - 1)
+        aligned = pd.concat([oos_returns.rename("strategy"), benchmark_series.rename("benchmark")], axis=1).dropna()
+        if len(aligned) and float(np.prod(1 + aligned["benchmark"].to_numpy())) > 0:
+            metrics["OOS strategy CAGR aligned"] = float(np.prod(1 + aligned["strategy"].to_numpy()) ** (12 / len(aligned)) - 1)
+    return (
+        pd.DataFrame(fold_rows),
+        pd.DataFrame(fold_candidates).sort_values(
+            ["Fold", "Selected by train", "Train Sharpe", "Train CAGR"],
+            ascending=[True, False, False, False], na_position="last", kind="mergesort",
+        ),
+        oos,
+        metrics,
+    )
+
+
 def moving_block_bootstrap_uncertainty(
     curve: pd.DataFrame,
     initial: float = 10_000,
