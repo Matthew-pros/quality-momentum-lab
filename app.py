@@ -312,6 +312,7 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     except Exception as exc:
         st.error(f"Načítání cen selhalo: {type(exc).__name__}: {exc}")
         st.stop()
+missing_investable_tickers = sorted(set(universe) - set(price_data_all))
 prices = {ticker: price_data_all[ticker] for ticker in universe if ticker in price_data_all and not price_data_all[ticker].empty}
 if not prices:
     st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
@@ -1200,13 +1201,21 @@ with tab_data:
         sec_df = pd.DataFrame(sec_report)
         st.dataframe(sec_df,width="stretch",hide_index=True)
         st.download_button("Stáhnout SEC provenance CSV",sec_df.to_csv(index=False).encode("utf-8"),"sec_provenance.csv","text/csv")
-    if price_report["Status"].eq("MISSING").any():
-        st.error("Některé cenové řady chybí. Backtest se nesmí používat bez vyřešení dat.")
+    if missing_investable_tickers:
+        st.error(
+            "Chybí cenová historie pro investiční ticker(y): " + ", ".join(missing_investable_tickers)
+            + ". Backtest se nesmí používat, dokud se nevyřeší tyto řady."
+        )
     elif "Quality" in price_report and price_report["Quality"].eq("REVIEW").any():
         flagged = price_report.loc[price_report["Quality"].eq("REVIEW"), "Ticker"].tolist()
         st.warning("Některé řady vyžadují kontrolu (stáří dat, podezřelý pohyb nebo neplatné hodnoty): " + ", ".join(flagged) + ". Neplatné cenové řádky jsou z výpočtů vyřazeny; velké pohyby mohou být reálné a nejsou automaticky odstraněny.")
     else:
-        st.success("V základní automatické kontrole nejsou zjištěné chybějící ani podezřelé cenové řady.")
+        st.success("Všechny požadované investiční ticker(y) mají cenovou řadu a základní automatická kontrola neodhalila varovné ceny.")
+    if benchmark_ticker not in price_data_all:
+        st.warning(
+            f"Chybí benchmark {benchmark_ticker}. Absolutní výsledek strategie lze spočítat, "
+            "ale nelze spolehlivě vyhodnotit relativní výkon ani alfa vůči benchmarku."
+        )
     st.caption(f"Načteno v tomto běhu · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
     st.caption("Dostupná historická řada neznamená ověřenou burzovní exekuci; poskytovatel může data opravit nebo omezit.")
 
