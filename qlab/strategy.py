@@ -392,34 +392,39 @@ def _simulate_position_month(
     return_period_end: pd.Timestamp,
     stop_mode: str = "Month-end 50-day low",
     stop_atr_multiple: float = 3.0,
-) -> tuple[float, str, str]:
-    """Simulate one selected position through the next month using daily bars.
+    prior_high_water: float | None = None,
+) -> tuple[float, str, str, float]:
+    """Simulate one holding segment with persistent high-water state.
 
-    Stop levels use information available through the prior daily close. On a gap
-    below the stop the model fills at that day's open; otherwise it fills at the
-    stop level. This is a daily-bar approximation, not an intraday sequence model.
+    Signal/bar times are month-end close. In daily stop modes, thresholds are computed
+    from information available through the previous close. If the next open gaps through
+    a stop, fill at that open; otherwise fill at the stop price when the day's low crosses
+    it. Daily OHLC cannot reveal the exact intraday ordering of the high and low, so the
+    high made on the current bar is deliberately not used to tighten that same bar's stop.
+    Returns segment return, exit reason, exit date and high-water mark to carry forward.
     """
     if frame is None or frame.empty:
-        return np.nan, "MISSING", ""
+        return np.nan, "MISSING", "", np.nan
     frame = frame.sort_index()
     close = _num(frame.get("Close", pd.Series(index=frame.index, dtype=float)))
     adjusted = _num(frame.get("Adj Close", close)).reindex(frame.index)
     known = frame.index[frame.index <= signal_date]
     if len(known) == 0:
-        return np.nan, "MISSING", ""
+        return np.nan, "MISSING", "", np.nan
     entry_date = known[-1]
     entry_close = float(close.loc[entry_date]) if pd.notna(close.loc[entry_date]) else np.nan
     entry_adjusted = float(adjusted.loc[entry_date]) if pd.notna(adjusted.loc[entry_date]) else entry_close
     if not np.isfinite(entry_close) or entry_close <= 0 or not np.isfinite(entry_adjusted) or entry_adjusted <= 0:
-        return np.nan, "MISSING", ""
+        return np.nan, "MISSING", "", np.nan
 
     path = frame.loc[(frame.index > entry_date) & (frame.index <= return_period_end)]
     if path.empty:
-        return np.nan, "MISSING", ""
-    high_series = _num(frame.get("High", close)).reindex(frame.index)
-    high_water = float(high_series.loc[frame.index <= entry_date].max()) if high_series.loc[frame.index <= entry_date].notna().any() else entry_close
-    if not np.isfinite(high_water):
-        high_water = entry_close
+        return np.nan, "MISSING", "", np.nan
+    # A fresh position starts with its entry close, not its pre-entry historical peak.
+    # An incumbent continues the high-water mark stored at the prior rebalance.
+    high_water = float(prior_high_water) if prior_high_water is not None and np.isfinite(prior_high_water) else entry_close
+    high_water = max(high_water, entry_close)
+
     prior_atr = np.nan
     if indicators is not None and entry_date in indicators.index and "ATR20" in indicators:
         prior_atr = pd.to_numeric(pd.Series([indicators.loc[entry_date, "ATR20"]]), errors="coerce").iloc[0]
@@ -457,7 +462,7 @@ def _simulate_position_month(
                 if np.isclose(level, stop_level, rtol=1e-8, atol=1e-8)
             ]
             reason = " + ".join(reason_names) if reason_names else "Daily stop"
-            return fill_adjusted / entry_adjusted - 1, reason, pd.Timestamp(dt).date().isoformat()
+            return fill_adjusted / entry_adjusted - 1, reason, pd.Timestamp(dt).date().isoformat(), np.nan
 
         if np.isfinite(raw_high) and raw_high > 0:
             high_water = max(high_water, float(raw_high))
@@ -469,8 +474,8 @@ def _simulate_position_month(
     last_date = path.index[-1]
     last_adj = adjusted.loc[last_date] if last_date in adjusted.index else np.nan
     if pd.isna(last_adj) or not np.isfinite(float(last_adj)) or float(last_adj) <= 0:
-        return np.nan, "MISSING", ""
-    return float(last_adj / entry_adjusted - 1), "HOLD", ""
+        return np.nan, "MISSING", "", np.nan
+    return float(last_adj / entry_adjusted - 1), "HOLD", "", high_water
 
 
 def run_monthly_backtest(
