@@ -103,34 +103,62 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
     realized_df = pd.DataFrame(realized)
     open_df = pd.DataFrame(open_rows)
     if realized_df.empty:
-        annual = pd.DataFrame(columns=["Year", "Ticker", "Currency", "Realized gain/loss", "Matched quantity"])
+        annual = pd.DataFrame(columns=[
+            "Year", "Ticker", "Currency", "Realized gain/loss", "Matched quantity",
+            "Gross sale proceeds", "Tax review status",
+        ])
     else:
         realized_df["Year"] = realized_df["Sale date"].dt.year
         realized_df["Tax review status"] = "Review tax treatment and FX conversion"
         for year, group in realized_df.groupby("Year"):
             year_mask = realized_df["Year"].eq(year)
             currencies = set(group["Currency"].astype(str).str.upper())
+            long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
+            short_holds = year_mask & ~realized_df["Holding period > 3 years"].astype(bool)
             if currencies == {"CZK"}:
                 annual_gross = float(group["Gross sale proceeds"].sum())
                 if annual_gross <= 100_000:
                     realized_df.loc[year_mask, "Tax review status"] = (
-                        "Potential value-test exemption: annual gross proceeds <= CZK 100,000; verify full portfolio"
+                        "Potential value-test exemption: annual gross proceeds <= CZK 100,000; verify full securities portfolio"
                     )
+                    continue
+
+                if int(year) <= 2025:
+                    long_gross = float(group.loc[group["Holding period > 3 years"].astype(bool), "Gross sale proceeds"].sum())
+                    if long_gross > 40_000_000:
+                        realized_df.loc[long_enough, "Tax review status"] = (
+                            "Historic-year 40m CZK exemption cap may apply; proportional calculation and other exempt sales need review"
+                        )
+                    else:
+                        realized_df.loc[long_enough, "Tax review status"] = (
+                            "Potential 3-year time-test exemption; verify historic 40m CZK aggregate cap and eligibility"
+                        )
                 else:
-                    long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
                     realized_df.loc[long_enough, "Tax review status"] = (
-                        "Potential 3-year time-test exemption; verify eligibility"
+                        "Potential 3-year time-test exemption (40m cap removed from 2026); verify full eligibility"
                     )
-                    realized_df.loc[year_mask & ~realized_df["Holding period > 3 years"].astype(bool), "Tax review status"] = (
-                        "Time test not met: review taxable income and tax basis"
-                    )
-            else:
-                long_enough = year_mask & realized_df["Holding period > 3 years"].astype(bool)
-                realized_df.loc[long_enough, "Tax review status"] = (
-                    "Potential 3-year time-test exemption; CZK annual value test requires FX conversion"
+                    long_gross = float(group.loc[group["Holding period > 3 years"].astype(bool), "Gross sale proceeds"].sum())
+                    if long_gross > 5_000_000:
+                        realized_df.loc[long_enough, "Tax review status"] = (
+                            "Potential time-test exemption; review notification duty for exempt income above CZK 5m"
+                        )
+                realized_df.loc[short_holds, "Tax review status"] = (
+                    "Time test not met and value test exceeded: review taxable income, deductible costs, and applicable-year rules"
                 )
-                realized_df.loc[year_mask & ~realized_df["Holding period > 3 years"].astype(bool), "Tax review status"] = (
-                    "Convert all annual proceeds to CZK; review tax treatment"
+            else:
+                # The value test and historic limit are annual CZK tests. Without dated
+                # FX conversion across the full tax household portfolio, do not decide them.
+                if int(year) <= 2025:
+                    historic_note = "; historic 40m CZK cap may apply"
+                else:
+                    historic_note = "; 40m CZK securities cap removed from 2026"
+                realized_df.loc[long_enough, "Tax review status"] = (
+                    "Potential 3-year time-test exemption; convert proceeds to CZK and review full portfolio"
+                    + historic_note
+                )
+                realized_df.loc[short_holds, "Tax review status"] = (
+                    "Holding period <= 3 years; annual value test needs full CZK proceeds/FX review"
+                    + historic_note
                 )
         annual = realized_df.groupby(["Year", "Ticker", "Currency"], as_index=False).agg(
             **{
