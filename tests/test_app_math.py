@@ -563,3 +563,28 @@ def test_dcf_sensitivity_value_falls_when_discount_rate_rises():
     )
     values = table.iloc[0, 1:].to_numpy(dtype=float)
     assert values[0] > values[1] > values[2]
+
+
+def test_czech_notification_threshold_is_per_sale_not_annual_total_and_respects_fifo_lot_splits():
+    from qlab.tax_lots import fifo_ledger
+
+    split_sale = pd.DataFrame([
+        {"Date":"2020-01-01","Ticker":"AAA","Type":"BUY","Quantity":20000,"Price":50,"Fees":0,"Currency":"CZK"},
+        {"Date":"2020-06-01","Ticker":"AAA","Type":"BUY","Quantity":30000,"Price":70,"Fees":0,"Currency":"CZK"},
+        {"Date":"2024-07-01","Ticker":"AAA","Type":"SELL","Quantity":50000,"Price":200,"Fees":0,"Currency":"CZK"},
+    ])
+    realized, _, _ = fifo_ledger(split_sale)
+    assert len(realized) == 2  # the sale is split across two FIFO acquisitions
+    assert realized["Sale transaction ID"].nunique() == 1
+    assert (realized["Gross sale proceeds"].sum()) == pytest.approx(10_000_000)
+    assert realized["Tax review status"].str.contains("§38v notice").all()
+
+    multiple_sales = pd.DataFrame([
+        {"Date":"2020-01-01","Ticker":"BBB","Type":"BUY","Quantity":40000,"Price":100,"Fees":0,"Currency":"CZK"},
+        {"Date":"2024-07-01","Ticker":"BBB","Type":"SELL","Quantity":20000,"Price":200,"Fees":0,"Currency":"CZK"},
+        {"Date":"2024-08-01","Ticker":"BBB","Type":"SELL","Quantity":20000,"Price":200,"Fees":0,"Currency":"CZK"},
+    ])
+    realized_multi, _, _ = fifo_ledger(multiple_sales)
+    assert realized_multi["Gross sale proceeds"].sum() == pytest.approx(8_000_000)
+    assert realized_multi["Sale transaction ID"].nunique() == 2
+    assert not realized_multi["Tax review status"].str.contains("§38v notice").any()
