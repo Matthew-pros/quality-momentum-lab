@@ -269,7 +269,11 @@ universe_history_signature = "static-universe"
 if universe_history_upload is not None:
     try:
         universe_history = parse_universe_membership(io.BytesIO(universe_history_upload.getvalue()))
-        historical_tickers = [ticker for ticker in tickers_in_membership_file(universe_history) if ticker not in EXCLUDED_FUNDS]
+        benchmark_rows = universe_history["Ticker"].isin(EXCLUDED_FUNDS)
+        if benchmark_rows.any():
+            st.warning("Benchmarková ETF byla z historického investičního univerza odstraněna: " + ", ".join(sorted(set(universe_history.loc[benchmark_rows, "Ticker"]))))
+            universe_history = universe_history.loc[~benchmark_rows].reset_index(drop=True)
+        historical_tickers = tickers_in_membership_file(universe_history)
         universe = historical_tickers
         universe_history_signature = hashlib.sha256(universe_history_upload.getvalue()).hexdigest()
     except Exception as exc:
