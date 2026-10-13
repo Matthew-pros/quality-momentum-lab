@@ -453,6 +453,29 @@ def _precompute_monthly_cross_sections(
     return out
 
 
+def _prepare_shared_backtest_kwargs(
+    prices: dict[str, pd.DataFrame],
+    kwargs: dict,
+) -> dict:
+    """Precompute indicators and point-in-time scored cross-sections once per dataset."""
+    prepared = dict(kwargs)
+    indicators = prepared.get("precomputed_indicators")
+    if indicators is None:
+        indicators = _precompute_indicator_cache(prices)
+        prepared["precomputed_indicators"] = indicators
+    if prepared.get("precomputed_cross_sections") is None:
+        use_fundamentals = bool(prepared.get("use_fundamentals", True))
+        fundamentals = prepared.get("fundamentals_history") if use_fundamentals else None
+        optional = prepared.get("optional_history")
+        prepared["precomputed_cross_sections"] = _precompute_monthly_cross_sections(
+            prices,
+            fundamentals_history=fundamentals,
+            optional_history=optional,
+            indicator_cache=indicators,
+        )
+    return prepared
+
+
 def _target_weights(
     selected: list[str],
     cross_section: pd.DataFrame,
@@ -952,9 +975,7 @@ def compare_stop_variants(
     not for choosing a winner using the final holdout or as evidence of predictive edge.
     """
     rows = []
-    common_kwargs = dict(backtest_kwargs)
-    if common_kwargs.get("precomputed_indicators") is None:
-        common_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
+    common_kwargs = _prepare_shared_backtest_kwargs(prices, dict(backtest_kwargs))
     for mode in stop_modes:
         row: dict[str, object] = {"Stop mode": mode, "Status": "OK", "Error": ""}
         try:
@@ -1183,9 +1204,7 @@ def train_select_holdout_search(
     if not hysteresis_values or any(not np.isfinite(x) or x < 0 or x > 100 for x in hysteresis_values):
         raise ValueError("Hysteresis candidates must be finite, non-negative values.")
 
-    backtest_kwargs = dict(backtest_kwargs)
-    if backtest_kwargs.get("precomputed_indicators") is None:
-        backtest_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
+    backtest_kwargs = _prepare_shared_backtest_kwargs(prices, dict(backtest_kwargs))
     candidate_curves: dict[tuple[float, float], pd.DataFrame] = {}
     result_rows: list[dict[str, object]] = []
     split_idx: int | None = None
@@ -1406,9 +1425,7 @@ def expanding_walk_forward(
             f"{13 + train_months + test_months} month-end observations, received {len(monthly)}."
         )
 
-    backtest_kwargs = dict(backtest_kwargs)
-    if backtest_kwargs.get("precomputed_indicators") is None:
-        backtest_kwargs["precomputed_indicators"] = _precompute_indicator_cache(prices)
+    backtest_kwargs = _prepare_shared_backtest_kwargs(prices, dict(backtest_kwargs))
     base_initial = float(backtest_kwargs.get("initial", 10_000))
     start_idx = 12  # match the 12-month burn-in used by run_monthly_backtest
     fold_candidates: list[dict[str, object]] = []
