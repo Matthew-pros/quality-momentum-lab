@@ -56,7 +56,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [ ] Získat point-in-time historii investičního univerza včetně delistovaných titulů a historických změn složení.
 - [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
 - [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
-- [ ] Přidat walk-forward, oddělený vývojový/testovací vzorek, benchmarky napříč regiony a report sektorových/regime expozic.
+- [x] Přidat expanding-window walk-forward: v každém foldu volit parametry pouze z minulých výnosů a reportovat jen vítěznou konfiguraci v neprolínajícím se OOS období. Každé OOS okno začíná s hotovostí a na konci účtuje modelovou likvidaci; nejde o nepřerušený broker účet.
+- [ ] Rozšířit walk-forward o skutečný kontinuální přenos pozic mezi foldech, širší sadu předem registrovaných modelů a následně další benchmarky napříč regiony a režimové expozice.
 - [ ] Prokázat, že chybějící/delistované výnosy nezkreslují výsledek; aktuální seznam tickerů stále vytváří survivorship bias.
 
 **Brána fáze:** výsledek musí být reprodukovatelný, s náklady, bez look-ahead bias a s benchmarkem; používání aktuálního tickerového seznamu stále znamená survivorship bias.
