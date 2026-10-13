@@ -264,10 +264,13 @@ def select_with_hysteresis(
     if not previous:
         # Fill initial portfolio once; the replacement cap governs subsequent rebalance dates.
         return set(ranked_names[:top_n])
-    current = [
+    incumbents = [
         ticker for ticker in previous
         if ticker in ranked.index and float(ranked[ticker]) >= exit_score_floor
     ]
+    # Use a stable score/ticker order; iterating a set directly can make tied decisions
+    # differ across processes because set iteration order is not a reproducibility contract.
+    current = sorted(incumbents, key=lambda ticker: (-float(ranked[ticker]), str(ticker)))
     replacements = 0
     # Mandatory exits can leave vacancies. Limit replacement entries to the configured
     # count so that a rule violation does not trigger an uncontrolled full rebalance.
@@ -282,7 +285,7 @@ def select_with_hysteresis(
         challengers = [t for t in ranked_names if t not in current]
         if not incumbents or not challengers:
             break
-        weakest = min(incumbents, key=lambda t: float(ranked[t]))
+        weakest = min(incumbents, key=lambda t: (float(ranked[t]), str(t)))
         challenger = challengers[0]
         if float(ranked[challenger]) < float(ranked[weakest]) + min_improvement:
             break
