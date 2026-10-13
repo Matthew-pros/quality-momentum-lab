@@ -139,7 +139,15 @@ def _download_frame(prices):
 
 def _download_ohlcv_long(prices):
     frames = []
-    columns = ["Date", "Ticker", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    base_columns = ["Date", "Ticker", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    valid_currencies = {
+        str(frame.attrs.get("currency", "UNKNOWN")).strip().upper()
+        for frame in prices.values() if frame is not None and not frame.empty
+    }
+    # Keep the optional Currency column only when every exported series has known,
+    # consistent metadata; unknown/mixed metadata must not be silently fabricated.
+    include_currency = bool(valid_currencies) and "UNKNOWN" not in valid_currencies
+    columns = ["Date", "Ticker"] + (["Currency"] if include_currency else []) + base_columns[2:]
     for ticker, frame in prices.items():
         if frame is None or frame.empty:
             continue
@@ -147,6 +155,8 @@ def _download_ohlcv_long(prices):
         part.index = pd.to_datetime(part.index)
         part["Ticker"] = str(ticker).upper()
         part["Date"] = part.index.date.astype(str)
+        if include_currency:
+            part["Currency"] = str(frame.attrs.get("currency", "UNKNOWN")).strip().upper()
         for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
             if column not in part:
                 part[column] = np.nan
@@ -1193,7 +1203,7 @@ with tab_data:
     st.subheader("Kontrola kvality dat")
     st.markdown("Chybná data vedou k sebejistým, ale chybným výsledkům. Proto je zde samostatný panel zdrojů a úplnosti.")
     data_cols = [c for c in [
-        "Price source", "Source file", "Ticker", "Status", "Quality", "Rows", "First date", "Last date",
+        "Price source", "Source file", "Ticker", "Currency", "Status", "Quality", "Rows", "First date", "Last date",
         "Calendar days stale", "Missing %", "Invalid price rows", "Max abs daily return %", "Adjustment status", "Message"
     ] if c in price_report.columns]
     st.dataframe(price_report[data_cols],width="stretch",hide_index=True,height=430, column_config={
