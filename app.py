@@ -174,6 +174,10 @@ with st.sidebar:
     min_score = st.slider("Minimální vstupní skóre", 0, 80, 35)
     hysteresis = st.slider("Hystereze skóre", 0, 25, 7, help="Nová akcie musí být lepší o tento počet bodů, aby vytlačila stávající pozici.")
     max_replacements = st.slider("Max. výměn za rebalancování", 0, 15, 2)
+    max_sector_positions = st.slider(
+        "Max. pozic na SIC skupinu", 0, 8, 2,
+        help="0 = vypnuto. Jde o hrubé SEC SIC industry group, nikoli GICS sektor. Chybějící klasifikace se nekontroluje; historické změny klasifikace nejsou k dispozici."
+    )
     breakout_filter = st.selectbox("Vstupní průraz", ["None", "20-day", "55-day"], index=0)
     weighting_method = st.selectbox("Váhy pozic v backtestu", ["Equal weight", "Inverse ATR"], index=0,
         help="Inverse ATR váží nižší volatilitu vyšší vahou; limit pozice může ponechat část portfolia v hotovosti.")
@@ -392,8 +396,12 @@ with tab_strategy:
         value=default_pit, disabled=sec_coverage < 0.40,
         help="Historický signál používá jen fakta zveřejněná do dne rozhodnutí. Zůstává survivorship bias, protože univerzum je současný seznam.")
     st.caption("Signálové parametry jsou vlevo. Stop-loss 50denní low / 3×ATR je v kalkulátoru pozic; tento měsíční backtest nepředstírá intradenní exekuci stopů.")
+    sector_map = screener.set_index("Ticker")["SIC group"].fillna("Unclassified").astype(str).to_dict() if "SIC group" in screener else {}
+    classified_sector_count = sum(1 for ticker in universe if sector_map.get(ticker, "Unclassified") not in {"Unclassified", "Unknown", ""})
+    if max_sector_positions > 0 and classified_sector_count < len(universe):
+        st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
     signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
-        cost_bps, breakout_filter, weighting_method, backtest_max_weight, stop_mode, stop_atr,
+        max_sector_positions, cost_bps, breakout_filter, weighting_method, backtest_max_weight, stop_mode, stop_atr,
         use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
     saved = st.session_state.get("backtest_result")
@@ -422,7 +430,8 @@ with tab_strategy:
                     fundamentals_history=fund_histories, optional_history=optional_histories,
                     require_breakout=breakout_filter, weighting_method=weighting_method,
                     max_position_weight=backtest_max_weight, stop_mode=stop_mode,
-                    stop_atr_multiple=stop_atr)
+                    stop_atr_multiple=stop_atr, sector_map=sector_map,
+                    max_sector_positions=max_sector_positions if max_sector_positions > 0 else None)
                 st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
         except Exception as exc:
             st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
@@ -466,6 +475,10 @@ with tab_strategy:
         with st.expander("Audit každého rebalancování"):
             st.dataframe(audit, width="stretch", hide_index=True)
         st.dataframe(curve, width="stretch")
+        if "SIC group weights" in curve:
+            st.markdown("#### Expozice podle současné SEC SIC skupiny")
+            st.caption("Skupiny jsou součtem koncových váh pozic podle aktuálního SEC SIC metadata. Nejde o historickou point-in-time klasifikaci ani o standardizovanou GICS sektorovou klasifikaci.")
+            st.dataframe(curve[["SIC group weights", "Max SIC group weight %", "Distinct SIC groups"]], width="stretch")
         st.download_button("Stáhnout equity curve CSV",curve.to_csv().encode("utf-8"),"backtest_curve.csv","text/csv")
         st.download_button("Stáhnout audit obchodních rozhodnutí CSV",audit.to_csv(index=False).encode("utf-8"),"backtest_audit.csv","text/csv")
         st.markdown("#### Citlivost na transakční náklady")
