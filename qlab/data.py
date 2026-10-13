@@ -611,8 +611,43 @@ def _concept_records(
     return []
 
 
+def _preferred_xbrl_unit(records: list[dict[str, Any]]) -> str:
+    """Choose one consistent XBRL unit, preferring the unit with most observations.
+
+    USD is preferred only when observation counts tie. This does not convert other
+    currencies into USD; it merely prevents mixing parallel units inside one metric.
+    """
+    units = sorted({str(row.get("unit", "")) for row in records if row.get("unit")})
+    if not units:
+        return ""
+    counts = {
+        unit: sum(1 for row in records if str(row.get("unit", "")) == unit)
+        for unit in units
+    }
+    return sorted(
+        units,
+        key=lambda unit: (
+            -counts[unit],
+            0 if unit.upper() == "USD" else 1,
+            1 if "/" in unit else 0,
+            unit,
+        ),
+    )[0]
+
+
+def _latest_instant_unit(
+    company_facts: dict[str, Any], tags: list[str], cutoff: str | date
+) -> str:
+    records = _concept_records(company_facts, tags, cutoff)
+    candidates = [row for row in records if not row.get("start")]
+    return _preferred_xbrl_unit(candidates)
+
+
 def _annual_series(company_facts: dict[str, Any], tags: list[str], cutoff: str | date) -> pd.Series:
     records = _concept_records(company_facts, tags, cutoff)
+    chosen_unit = _preferred_xbrl_unit(records)
+    if chosen_unit:
+        records = [row for row in records if str(row.get("unit", "")) == chosen_unit]
     chosen: dict[str, dict[str, Any]] = {}
     for row in records:
         if not str(row.get("form", "")).startswith(("10-K", "20-F", "40-F")):
@@ -637,7 +672,9 @@ def _annual_series(company_facts: dict[str, Any], tags: list[str], cutoff: str |
             pairs[pd.Timestamp(end)] = float(row["val"])
         except (TypeError, ValueError, KeyError):
             continue
-    return pd.Series(pairs, dtype=float).sort_index() if pairs else pd.Series(dtype=float)
+    result = pd.Series(pairs, dtype=float).sort_index() if pairs else pd.Series(dtype=float)
+    result.attrs["unit"] = chosen_unit
+    return result
 
 
 def _latest_instant(
@@ -645,6 +682,9 @@ def _latest_instant(
 ) -> tuple[float, str, str]:
     records = _concept_records(company_facts, tags, cutoff)
     candidates = [row for row in records if not row.get("start")]
+    chosen_unit = _preferred_xbrl_unit(candidates)
+    if chosen_unit:
+        candidates = [row for row in candidates if str(row.get("unit", "")) == chosen_unit]
     if not candidates:
         return np.nan, "", ""
     candidates.sort(key=lambda row: (str(row.get("end", "")), str(row.get("filed", ""))))
