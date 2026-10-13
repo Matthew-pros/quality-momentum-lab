@@ -1124,3 +1124,62 @@ def test_daily_atr_stop_does_not_trigger_on_raw_price_split_when_adjusted_series
     assert reason == "HOLD"
     assert exit_date == ""
     assert ret == pytest.approx(0.0)
+
+
+def test_point_in_time_universe_parser_and_membership_boundaries():
+    import io
+    from qlab.universe import parse_universe_membership, universe_members_asof, tickers_in_membership_file
+
+    csv = b"Ticker,Start date,End date\nAAA,2010-01-01,2020-12-31\nAAA,2021-01-01,\nBBB,2015-06-01,2024-12-31\nCCC,2022-01-01,\n"
+    history = parse_universe_membership(io.BytesIO(csv))
+    assert tickers_in_membership_file(history) == ["AAA", "BBB", "CCC"]
+    assert universe_members_asof(history, "2018-06-30") == {"AAA", "BBB"}
+    assert universe_members_asof(history, "2021-01-01") == {"AAA", "BBB"}
+    assert universe_members_asof(history, "2023-01-31") == {"AAA", "BBB", "CCC"}
+    assert universe_members_asof(history, "2025-06-30") == {"AAA", "CCC"}
+    assert universe_members_asof(None, "2025-06-30") is None
+
+
+def test_point_in_time_universe_parser_rejects_overlapping_and_open_ended_intervals():
+    import io
+    from qlab.universe import parse_universe_membership
+
+    overlap = b"Ticker,Start date,End date\nAAA,2020-01-01,2020-12-31\nAAA,2020-12-31,\n"
+    with pytest.raises(ValueError, match="intervals overlap"):
+        parse_universe_membership(io.BytesIO(overlap))
+
+    after_open_end = b"Ticker,Start date,End date\nAAA,2020-01-01,\nAAA,2022-01-01,2022-12-31\n"
+    with pytest.raises(ValueError, match="open-ended membership"):
+        parse_universe_membership(io.BytesIO(after_open_end))
+
+    bad_start = b"Ticker,Start date,End date\nAAA,not-a-date,\n"
+    with pytest.raises(ValueError, match="valid Start date"):
+        parse_universe_membership(io.BytesIO(bad_start))
+
+
+def test_point_in_time_membership_filters_before_cross_sectional_factor_ranking():
+    from qlab.strategy import _build_monthly_cross_section, _precompute_indicator_cache
+    from qlab.universe import parse_universe_membership
+
+    prices = synthetic_prices(1000)
+    decision_date = pd.Timestamp("2020-06-30")
+    history = parse_universe_membership(pd.DataFrame([
+        {"Ticker":"AAA","Start date":"2018-01-01","End date":""},
+        {"Ticker":"BBB","Start date":"2018-01-01","End date":""},
+        {"Ticker":"CCC","Start date":"2021-01-01","End date":""},
+    ]))
+    cache = _precompute_indicator_cache(prices)
+    point_in_time = _build_monthly_cross_section(
+        prices, decision_date, None, None, indicator_cache=cache, universe_history=history
+    )
+    contemporaneous_universe = _build_monthly_cross_section(
+        {ticker: prices[ticker] for ticker in ["AAA","BBB"]},
+        decision_date, None, None,
+        indicator_cache={ticker: cache[ticker] for ticker in ["AAA","BBB"]},
+    )
+    assert set(point_in_time["Ticker"]) == {"AAA", "BBB"}
+    assert set(contemporaneous_universe["Ticker"]) == {"AAA", "BBB"}
+    left = point_in_time.set_index("Ticker").sort_index()
+    right = contemporaneous_universe.set_index("Ticker").sort_index()
+    pd.testing.assert_series_equal(left["Momentum score"], right["Momentum score"])
+    pd.testing.assert_series_equal(left["Fundamental/composite score"], right["Fundamental/composite score"])
