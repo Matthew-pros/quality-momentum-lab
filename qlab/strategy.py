@@ -13,14 +13,12 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     """Calculate daily indicators using adjusted OHLC, excluding the current bar from breakouts."""
     if frame is None or frame.empty:
         return pd.DataFrame()
-    close = _num(frame.get("Adj Close", frame.get("Close", pd.Series(dtype=float))))
+    close = _num(frame.get("Close", frame.get("Adj Close", pd.Series(dtype=float))))
     if close.empty:
         return pd.DataFrame()
-    factor = (close / _num(frame.get("Close", close))).replace([np.inf, -np.inf], np.nan)
-    high = _num(frame.get("Adj High", _num(frame.get("High", close)) * factor))
-    low = _num(frame.get("Adj Low", _num(frame.get("Low", close)) * factor))
-    high = high.reindex(close.index).fillna(close)
-    low = low.reindex(close.index).fillna(close)
+    total_return_close = _num(frame.get("Adj Close", close)).reindex(close.index)
+    high = _num(frame.get("High", close)).reindex(close.index).fillna(close)
+    low = _num(frame.get("Low", close)).reindex(close.index).fillna(close)
     prev_close = close.shift(1)
     true_range = pd.concat([
         high - low,
@@ -40,13 +38,14 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(index=close.index)
     out["Close"] = close
+    out["Adj Close"] = total_return_close
     out["High"] = high
     out["Low"] = low
     out["MA50"] = close.rolling(50, min_periods=50).mean()
     out["MA200"] = close.rolling(200, min_periods=200).mean()
     out["MA200_prev20"] = close.rolling(200, min_periods=200).mean().shift(20)
-    out["Momentum 12-1M"] = close.shift(21) / close.shift(252) - 1
-    out["Momentum 6-1M"] = close.shift(21) / close.shift(126) - 1
+    out["Momentum 12-1M"] = total_return_close.shift(21) / total_return_close.shift(252) - 1
+    out["Momentum 6-1M"] = total_return_close.shift(21) / total_return_close.shift(126) - 1
     out["ADX14"] = adx14
     out["ATR14"] = atr14
     out["ATR20"] = atr20
@@ -58,9 +57,9 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     out["Breakout55"] = close > out["High55 prior"]
     out["Trend OK"] = (close > out["MA200"]) & (out["MA50"] > out["MA200"]) & (out["MA200"] > out["MA200_prev20"])
     out["Below 50d low"] = close < out["Low50 prior"]
-    out["Daily return"] = close.pct_change(fill_method=None)
+    out["Daily return"] = total_return_close.pct_change(fill_method=None)
     out["Volatility20%"] = out["Daily return"].rolling(20, min_periods=20).std() * np.sqrt(252) * 100
-    out["Close raw"] = _num(frame.get("Close", close)).reindex(close.index)
+    out["Close raw"] = close
     return out.replace([np.inf, -np.inf], np.nan)
 
 
@@ -179,6 +178,7 @@ def prepare_screener(
     prices: dict[str, pd.DataFrame],
     fundamentals: dict[str, dict],
     optional_signals: dict[str, dict] | None = None,
+    allow_estimated_valuation: bool = False,
 ) -> pd.DataFrame:
     rows = []
     optional_signals = optional_signals or {}
@@ -229,7 +229,17 @@ def prepare_screener(
         rows.append(row)
     if not rows:
         return pd.DataFrame()
-    return score_cross_section(pd.DataFrame(rows))
+    df = pd.DataFrame(rows)
+    if not allow_estimated_valuation:
+        scored = score_cross_section(df.assign(**{
+            "FCF yield %": np.nan,
+            "P/E (annual EPS proxy)": np.nan,
+        }))
+        for column in ["Quality score", "Value score", "Growth score", "Momentum score", "Trend score", "Technical score", "Fundamental/composite score", "Fundamental coverage %", "Score status", "Signal"]:
+            df[column] = scored[column]
+    else:
+        df = score_cross_section(df)
+    return df
 
 
 def select_with_hysteresis(
@@ -276,10 +286,13 @@ def _build_monthly_cross_section(
     signal_date: pd.Timestamp,
     fundamentals_history: dict[str, pd.DataFrame] | None,
     optional_history: dict[str, pd.DataFrame] | None,
+    indicator_cache: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     rows = []
     for ticker, frame in prices.items():
-        daily = calculate_indicators(frame)
+        daily = (indicator_cache or {}).get(ticker)
+        if daily is None:
+            daily = calculate_indicators(frame)
         history = daily.loc[daily.index <= signal_date]
         if history.empty:
             continue
@@ -342,7 +355,7 @@ def run_monthly_backtest(
     if not prices:
         return None, None, None
     adjusted = {}
-    for ticker, frame in prices.items():
+    indicator_cache = {ticker: calculate_indicators(frame) for ticker, frame in prices.items()}
         if frame is None or frame.empty:
             continue
         col = "Adj Close" if "Adj Close" in frame else "Close"
@@ -365,13 +378,20 @@ def run_monthly_backtest(
     start_idx = 12
     for i in range(start_idx, len(monthly) - 1):
         decision_date = monthly.index[i]
-        cross = _build_monthly_cross_section(prices, decision_date, fundamentals_history if use_fundamentals else None, optional_history)
+        cross = _build_monthly_cross_section(
+            prices, decision_date,
+            fundamentals_history if use_fundamentals else None,
+            optional_history, indicator_cache=indicator_cache
+        )
         if cross.empty:
             continue
         score_col = "Fundamental/composite score"
         cross[score_col] = cross[score_col].where(cross[score_col].notna(), cross["Technical score"])
         eligible = cross["Trend OK"].fillna(False).astype(bool) & (cross["ADX14"].fillna(0) >= min_adx)
         eligible &= cross[score_col].fillna(-np.inf) >= min_score
+        if use_fundamentals:
+            # Do not pretend a company with no disclosed data was factor-ranked.
+            eligible &= cross["Fundamental coverage %"].fillna(0) >= 50
         if require_breakout == "20-day":
             eligible &= cross["Breakout20"].fillna(False).astype(bool)
         elif require_breakout == "55-day":
