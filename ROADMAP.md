@@ -19,9 +19,11 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Oddělit cenový adapter od fundamentálního zdroje; přestat používat nestabilní Yahoo `.info` endpoint pro fundamenty.
 - [x] Stahovat ceny v jedné neparalelní dávce, normalizovat různé tvary sloupců a při částečném selhání opakovat chybějící tickery sekvenčně.
 - [x] Vykazovat první/poslední datum cenové řady, počet řádků, chybějící řady a exportovat kontrolní CSV.
-- [x] Přidat oficiální SEC EDGAR Company Facts adaptér s identifikačním User-Agent a opakováním při přechodných HTTP chybách.
+- [x] Přidat oficiální SEC EDGAR Company Facts adaptér s identifikačním User-Agent, SIC kódem/popisem a opakováním při přechodných HTTP chybách.
+- [x] Detekovat zastaralé řady, neplatné OHLC, extrémní denní pohyby a zobrazovat stav `OK/REVIEW` v datovém panelu; neplatné cenové řádky se z výpočtů vyřazují.
+- [x] Použít adjustované OHLC pro MA/ATR/breakout/denní stop, aby historické splitové úpravy nevytvářely falešné cenové skoky.
 - [ ] Porovnat konkrétní tickery s nezávislým cenovým zdrojem a ručně zkontrolovat vybrané XBRL metriky.
-- [ ] Doplnit detekci zastaralých cen, podezřelých skoků, splitů, duplicit po transformaci a varování na příliš řídkou historii.
+- [ ] Doplnit automatickou kontrolu duplicit po transformaci, corporate actions a varování na příliš řídkou historii.
 - [ ] Vybrat zdroj s vhodnými právy pro veřejné použití a redistribuci; Yahoo/yfinance zůstává pouze zdrojem pro experimentální výzkum, dokud nejsou práva vyřešena.
 
 **Brána fáze:** žádný chybějící nebo starý údaj nesmí být tiše prezentován jako ověřená aktuální data.
