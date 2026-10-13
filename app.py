@@ -99,6 +99,13 @@ def _equity_chart(close, ma50=None, ma200=None, title="Cenový vývoj"):
         yaxis_title="Cena v měně kotace", hovermode="x unified")
     return fig
 
+def safe_float(value, default=0.0):
+    try:
+        num = float(value)
+        return num if np.isfinite(num) else default
+    except (TypeError, ValueError):
+        return default
+
 def _daily_returns(frame):
     col = "Adj Close" if "Adj Close" in frame else "Close"
     return pd.to_numeric(frame[col], errors="coerce").dropna()
@@ -328,7 +335,10 @@ with tab_screener:
 with tab_strategy:
     st.subheader("Měsíční rebalancování · nízká obrátka")
     st.markdown("Signál se vytváří na konci měsíce a výnos portfolia se počítá za následující měsíc. Náklady se aplikují na hrubý zobchodovaný objem. Hystereze omezuje výměny při malém rozdílu skóre.")
-    sec_coverage = sum(1 for t in sec_bundles if t in prices) / max(1, len(universe))
+    sec_coverage = sum(
+        1 for ticker in sec_bundles
+        if ticker in prices and safe_float(fundamentals.get(ticker, {}).get("Fundamental coverage %", 0)) >= 50
+    ) / max(1, len(universe))
     default_pit = sec_coverage >= 0.70
     use_pit = st.checkbox(f"Zapnout point-in-time SEC fundamenty v backtestu (coverage nyní {sec_coverage:.0%})",
         value=default_pit, disabled=sec_coverage < 0.40,
