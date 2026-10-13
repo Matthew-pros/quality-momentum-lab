@@ -177,6 +177,13 @@ with st.sidebar:
     weighting_method = st.selectbox("Váhy pozic v backtestu", ["Equal weight", "Inverse ATR"], index=0,
         help="Inverse ATR váží nižší volatilitu vyšší vahou; limit pozice může ponechat část portfolia v hotovosti.")
     backtest_max_weight = st.slider("Max. váha pro Inverse ATR (%)", 10, 50, 35, 5, disabled=weighting_method != "Inverse ATR") / 100
+    stop_mode = st.selectbox(
+        "Výstupní pravidlo v backtestu",
+        ["Month-end 50-day low", "No stop / month-end rebalancing", "ATR trailing stop", "Daily 50-day low", "ATR + daily 50-day low"],
+        index=0,
+        help="Denní stop varianty používají denní OHLC, stop založený na datech předchozího close a gap-aware fill na open. Není to intradenní simulace."
+    )
+    st.caption("ATR stop využívá hodnotu z pole „Stop distance (× ATR20)“ níže.")
     cost_bps = st.slider("Náklady na zobchodovaný objem (bps)", 0, 100, 15, 5)
     st.divider()
     capital = st.number_input("Modelový kapitál (USD)", min_value=1000.0, value=25000.0, step=1000.0)
@@ -366,7 +373,7 @@ with tab_screener:
 
 with tab_strategy:
     st.subheader("Měsíční rebalancování · nízká obrátka")
-    st.markdown("Signál se vytváří na konci měsíce a výnos portfolia se počítá za následující měsíc. Náklady se aplikují na hrubý zobchodovaný objem. Hystereze omezuje výměny při malém rozdílu skóre. Porušení 50denního minima je měsíční výstupní spouštěč.")
+    st.markdown("Signál vzniká na konci měsíce a vážený výnos se sleduje v následujícím měsíci. Výstupy lze porovnat jako žádný stop, měsíční close pod 50denním minimem, denní 50denní low, ATR trailing stop nebo kombinaci. Denní stop používá gap-aware plnění z OHLC, nikoli intradenní tickovou historii.")
     sec_coverage = sum(
         1 for ticker in sec_bundles
         if ticker in prices and safe_float(fundamentals.get(ticker, {}).get("Fundamental coverage %", 0)) >= 50
@@ -377,8 +384,8 @@ with tab_strategy:
         help="Historický signál používá jen fakta zveřejněná do dne rozhodnutí. Zůstává survivorship bias, protože univerzum je současný seznam.")
     st.caption("Signálové parametry jsou vlevo. Stop-loss 50denní low / 3×ATR je v kalkulátoru pozic; tento měsíční backtest nepředstírá intradenní exekuci stopů.")
     signature = (tuple(universe), period, top_n, min_adx, min_score, hysteresis, max_replacements,
-        cost_bps, breakout_filter, weighting_method, backtest_max_weight, use_pit,
-        use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
+        cost_bps, breakout_filter, weighting_method, backtest_max_weight, stop_mode, stop_atr,
+        use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest")
     saved = st.session_state.get("backtest_result")
     if run_backtest:
@@ -405,7 +412,8 @@ with tab_strategy:
                     max_replacements=max_replacements, use_fundamentals=use_pit,
                     fundamentals_history=fund_histories, optional_history=optional_histories,
                     require_breakout=breakout_filter, weighting_method=weighting_method,
-                    max_position_weight=backtest_max_weight)
+                    max_position_weight=backtest_max_weight, stop_mode=stop_mode,
+                    stop_atr_multiple=stop_atr)
                 st.session_state["backtest_result"] = {"curve":curve,"metrics":metrics,"audit":audit,"signature":signature,"error":None}
         except Exception as exc:
             st.session_state["backtest_result"] = {"curve":None,"metrics":None,"audit":None,"signature":signature,"error":f"{type(exc).__name__}: {exc}"}
@@ -461,7 +469,7 @@ with tab_strategy:
             title="CAGR při různých nákladech", template="plotly_dark")
         sensitivity_fig.update_layout(height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(sensitivity_fig, width="stretch")
-        st.warning("Tento test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Close-to-close model nákladů nenahrazuje plnou exekuci na open/spread/slippage a daňový model.")
+        st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Náklady nezahrnují plně spread, skluz, FX a daňový model.")
 
 with tab_portfolio:
     st.subheader("ATR position sizing a evidence lotů")
