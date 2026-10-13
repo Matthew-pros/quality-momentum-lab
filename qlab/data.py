@@ -17,6 +17,7 @@ import yfinance as yf
 
 SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_COMPANY_FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 PRICE_FIELDS = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
 
 
@@ -326,6 +327,35 @@ def load_ohlcv_csv(
     return assess_price_quality(prices, report, now=now)
 
 
+def sic_group(sic: int | str | None) -> str:
+    """Coarse SIC major group, not a GICS/ICB sector classification."""
+    if sic in (None, ""):
+        return "Unclassified"
+    try:
+        code = int(sic)
+    except (TypeError, ValueError):
+        return "Unclassified"
+    if 100 <= code <= 999:
+        return "Agriculture / Forestry / Fishing"
+    if 1000 <= code <= 1499:
+        return "Mining"
+    if 1500 <= code <= 1799:
+        return "Construction"
+    if 2000 <= code <= 3999:
+        return "Manufacturing"
+    if 4000 <= code <= 4999:
+        return "Transportation / Communications / Utilities"
+    if 5000 <= code <= 5999:
+        return "Wholesale / Retail Trade"
+    if 6000 <= code <= 6799:
+        return "Finance / Insurance / Real Estate"
+    if 7000 <= code <= 8999:
+        return "Services"
+    if 9000 <= code <= 9999:
+        return "Public Administration / Other"
+    return "Unclassified"
+
+
 def sec_user_agent(email: str) -> str:
     return f"QualityMomentumLab/1.0 (https://github.com/Matthew-pros/quality-momentum-lab; contact: {email.strip()})"
 
@@ -341,6 +371,8 @@ def _sec_get_json(url: str, email: str) -> dict[str, Any]:
     last_error = None
     for attempt in range(4):
         try:
+            # Stay below SEC's published fair-access request rate even during cache misses.
+            time.sleep(0.12)
             response = requests.get(url, headers=headers, timeout=25)
             if response.status_code == 429 or 500 <= response.status_code < 600:
                 retry_after = response.headers.get("Retry-After", "")
@@ -383,7 +415,21 @@ def load_sec_company_facts(
         raise LookupError(f"{ticker}: ticker is not in the SEC company ticker map")
     cik = int(item["cik"])
     payload = _sec_get_json(SEC_COMPANY_FACTS_URL.format(cik=f"{cik:010d}"), email)
-    return {"ticker": ticker.upper(), "cik": cik, "title": item["title"], "payload": payload}
+    sic = None
+    sic_description = ""
+    try:
+        submissions = _sec_get_json(SEC_SUBMISSIONS_URL.format(cik=f"{cik:010d}"), email)
+        sic_value = submissions.get("sic")
+        sic = int(sic_value) if sic_value not in (None, "") else None
+        sic_description = str(submissions.get("sicDescription", "") or "")
+    except Exception as exc:
+        # The company facts endpoint remains usable if optional SIC metadata is unavailable.
+        sic_description = f"SEC submissions metadata unavailable: {type(exc).__name__}"
+    return {
+        "ticker": ticker.upper(), "cik": cik, "title": item["title"],
+        "payload": payload, "sic": sic, "sic_description": sic_description,
+        "sic_group": sic_group(sic),
+    }
 
 
 def _concept_records(
