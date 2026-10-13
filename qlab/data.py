@@ -184,8 +184,9 @@ def assess_price_quality(
             report.loc[mask, "Rows"] = int(valid_close.notna().sum())
             report.loc[mask, "Missing %"] = round(float(valid_close.isna().mean() * 100), 2)
     # Preserve price series that were absent from the quality report (e.g. extra CSV tickers).
+    report_tickers = set(report["Ticker"].astype(str))
     for ticker, frame in prices.items():
-        if ticker not in sanitized and (report["Ticker"].astype(str) == ticker).any() is False:
+        if ticker not in sanitized and ticker not in report_tickers:
             sanitized[ticker] = frame.copy()
     return sanitized, report
 
