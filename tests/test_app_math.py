@@ -959,3 +959,77 @@ def test_dcf_rejects_nonpositive_shares_invalid_rates_and_nonpositive_fcf():
         calculate_fcfe_dcf(100, 0.03, 0.10, 0.02, shares_outstanding=0)
     with pytest.raises(ValueError, match="Shares outstanding must be positive"):
         dcf_sensitivity(100, -5, [0.03], [0.10], 0.02)
+
+
+def test_backtest_evaluation_window_resets_portfolio_and_uses_only_requested_decisions():
+    from qlab.strategy import run_monthly_backtest
+
+    prices = synthetic_prices(1300)
+    month_ends = prices["AAA"]["Adj Close"].resample("ME").last().dropna().index
+    start, end = month_ends[25], month_ends[30]
+    curve, _, audit = run_monthly_backtest(
+        prices=prices, top_n=2, cost_bps=10, initial=10_000,
+        min_adx=0, min_score=0, use_fundamentals=False,
+        stop_mode="No stop / month-end rebalancing",
+        evaluation_start_date=start, evaluation_end_date=end,
+    )
+    assert curve is not None and audit is not None
+    assert len(curve) == 6
+    assert pd.Timestamp(audit.iloc[0]["Signal date"]) == start
+    assert pd.Timestamp(audit.iloc[-1]["Signal date"]) == end
+    assert curve.index[0] == month_ends[26]
+    assert curve.index[-1] == month_ends[31]
+    assert audit.iloc[0]["Previous holdings"] == ""
+
+
+def test_expanding_walk_forward_selects_on_past_only_and_returns_nonoverlapping_oos_folds():
+    from qlab.strategy import expanding_walk_forward
+
+    prices = synthetic_prices(1300)
+    folds, candidates, oos, metrics = expanding_walk_forward(
+        prices=prices,
+        min_score_candidates=(0.0, 20.0),
+        hysteresis_candidates=(0.0, 7.0),
+        train_months=12,
+        test_months=3,
+        step_months=6,
+        min_train_months=12,
+        top_n=2,
+        cost_bps=10,
+        initial=10_000,
+        min_adx=0,
+        min_score=0,
+        hysteresis=7,
+        max_replacements=1,
+        use_fundamentals=False,
+        stop_mode="No stop / month-end rebalancing",
+    )
+    assert len(folds) >= 4
+    assert len(candidates) == len(folds) * 4
+    assert candidates.groupby("Fold")["Selected by train"].sum().eq(1).all()
+    assert not any("OOS" in col for col in candidates.columns)
+    assert len(oos) == int(folds["OOS months"].sum())
+    assert oos.index.is_monotonic_increasing and not oos.index.duplicated().any()
+    assert (folds["Training end"] if "Training end" in folds else folds["Training end decision"] < folds["OOS return start"]).all()
+    assert "Terminal liquidation turnover" in oos.columns
+    assert np.allclose(oos["Equity"], 10_000 * (1 + oos["Net return"]).cumprod())
+    assert metrics["OOS months"] == len(oos)
+    assert np.isfinite(metrics["OOS CAGR"])
+
+
+def test_expanding_walk_forward_rejects_overlapping_folds_and_insufficient_history():
+    from qlab.strategy import expanding_walk_forward
+
+    prices = synthetic_prices(1300)
+    with pytest.raises(ValueError, match="step_months must be >= test_months"):
+        expanding_walk_forward(
+            prices=prices, min_score_candidates=(20.0,), hysteresis_candidates=(5.0,),
+            train_months=12, test_months=6, step_months=3, min_train_months=12,
+            top_n=2, use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
+        )
+    with pytest.raises(ValueError, match="Not enough history"):
+        expanding_walk_forward(
+            prices=synthetic_prices(400), min_score_candidates=(20.0,), hysteresis_candidates=(5.0,),
+            train_months=36, test_months=12, step_months=12, min_train_months=24,
+            top_n=2, use_fundamentals=False, stop_mode="No stop / month-end rebalancing",
+        )
