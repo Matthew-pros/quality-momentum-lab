@@ -1071,6 +1071,74 @@ def industry_exposure_summary(
     ).reset_index(drop=True)
 
 
+def moving_block_bootstrap_uncertainty(
+    curve: pd.DataFrame,
+    initial: float = 10_000,
+    bootstrap_samples: int = 500,
+    block_length: int = 6,
+    seed: int = 42,
+) -> pd.DataFrame:
+    """Estimate descriptive uncertainty bands by resampling contiguous monthly-return blocks.
+
+    This is a stationary-regime sensitivity diagnostic, not a guarantee of frequentist
+    coverage and not a fix for look-ahead/survivorship bias. It resamples the already
+    generated *net* return path; it does not refit/re-optimize the strategy.
+    """
+    if curve is None or curve.empty or "Net return" not in curve:
+        return pd.DataFrame()
+    returns = pd.to_numeric(curve["Net return"], errors="coerce").to_numpy(dtype=float)
+    if not np.isfinite(returns).all():
+        raise ValueError("Net returns must be finite for bootstrap uncertainty.")
+    if (returns <= -1).any():
+        raise ValueError("Monthly returns must be greater than -100% for compounding.")
+    n = len(returns)
+    if bootstrap_samples < 100 or bootstrap_samples > 10_000:
+        raise ValueError("Bootstrap samples must be between 100 and 10,000.")
+    if block_length < 1 or block_length > max(1, n // 2):
+        raise ValueError("Block length must be positive and no more than half of the sample length.")
+    if not np.isfinite(float(initial)) or initial <= 0:
+        raise ValueError("Initial capital must be positive and finite.")
+
+    def metrics(sample: np.ndarray) -> tuple[float, float, float, float]:
+        factors = 1.0 + sample
+        equity = float(initial) * np.cumprod(factors)
+        total_factor = float(np.prod(factors))
+        cagr = total_factor ** (12.0 / len(sample)) - 1 if total_factor > 0 else np.nan
+        volatility = float(np.std(sample, ddof=1) * np.sqrt(12)) if len(sample) > 1 else np.nan
+        sharpe = float(np.mean(sample) * 12 / volatility) if np.isfinite(volatility) and volatility > 0 else np.nan
+        wealth = np.r_[float(initial), equity]
+        peaks = np.maximum.accumulate(wealth)[1:]
+        drawdown = equity / peaks - 1
+        return cagr, sharpe, float(np.min(drawdown)), float(equity[-1])
+
+    observed = metrics(returns)
+    rng = np.random.default_rng(seed)
+    per_replication = np.empty((bootstrap_samples, 4), dtype=float)
+    block_offsets = np.arange(block_length, dtype=int)
+    blocks_needed = int(np.ceil(n / block_length))
+    for b in range(bootstrap_samples):
+        starts = rng.integers(0, n, size=blocks_needed)
+        indices = ((starts[:, None] + block_offsets[None, :]) % n).reshape(-1)[:n]
+        per_replication[b] = metrics(returns[indices])
+
+    labels = ["CAGR", "Sharpe (rf=0)", "Max drawdown", "Final equity"]
+    rows = []
+    for j, label in enumerate(labels):
+        samples = per_replication[:, j]
+        finite = samples[np.isfinite(samples)]
+        rows.append({
+            "Metric": label,
+            "Observed": observed[j],
+            "5th percentile": float(np.quantile(finite, 0.05)) if len(finite) else np.nan,
+            "Median bootstrap": float(np.quantile(finite, 0.50)) if len(finite) else np.nan,
+            "95th percentile": float(np.quantile(finite, 0.95)) if len(finite) else np.nan,
+            "Bootstrap samples": int(bootstrap_samples),
+            "Block length (months)": int(block_length),
+            "Seed": int(seed),
+        })
+    return pd.DataFrame(rows)
+
+
 def calculate_position_sizes(
     screener: pd.DataFrame,
     selected_tickers: list[str],
