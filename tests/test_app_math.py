@@ -304,3 +304,59 @@ def test_initial_portfolio_can_fill_target_count_before_monthly_replacement_limi
         min_improvement=7.0, exit_score_floor=30.0, max_replacements=1,
     )
     assert selected == {"A", "B", "C"}
+
+
+def test_csv_price_adapter_loads_long_format_and_reports_universe_gaps():
+    import io
+    from qlab.data import load_ohlcv_csv
+
+    rows = []
+    dates = pd.bdate_range(end=pd.Timestamp.now().normalize(), periods=4)
+    for ticker, base in [("AAA", 20.0), ("BBB", 50.0)]:
+        for i, date in enumerate(dates):
+            close = base + i * 0.1
+            rows.append({
+                "Date": date.date().isoformat(), "Ticker": ticker,
+                "Open": close - 0.05, "High": close + 0.20, "Low": close - 0.20,
+                "Close": close, "Adj Close": close, "Volume": 1000 + i,
+            })
+    payload = pd.DataFrame(rows).to_csv(index=False).encode("utf-8")
+    prices, report = load_ohlcv_csv(io.BytesIO(payload), expected_tickers=["AAA", "BBB", "SPY"])
+    assert set(prices) == {"AAA", "BBB"}
+    assert len(prices["AAA"]) == 4
+    assert report.loc[report["Ticker"] == "SPY", "Status"].iloc[0] == "MISSING"
+    assert report.loc[report["Ticker"] == "AAA", "Quality"].iloc[0] == "OK"
+    assert "Adj Close" in prices["AAA"]
+
+
+def test_csv_price_adapter_rejects_duplicate_ticker_dates_and_missing_columns():
+    import io
+    from qlab.data import load_ohlcv_csv
+
+    duplicate_csv = pd.DataFrame([
+        {"Date":"2026-01-02","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10},
+        {"Date":"2026-01-02","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10},
+    ]).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="Duplicate ticker/date"):
+        load_ohlcv_csv(io.BytesIO(duplicate_csv), expected_tickers=["AAA"])
+
+    incomplete = pd.DataFrame([{"Date":"2026-01-02","Ticker":"AAA","Close":10}]).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="requires columns"):
+        load_ohlcv_csv(io.BytesIO(incomplete), expected_tickers=["AAA"])
+
+
+def test_market_quality_report_flags_stale_invalid_and_extreme_prices():
+    from qlab.data import assess_price_quality
+
+    index = pd.to_datetime(["2026-09-20", "2026-09-21", "2026-09-22"])
+    frame = pd.DataFrame({
+        "Open": [10.0, 10.0, 0.0], "High": [11.0, 11.0, 0.0],
+        "Low": [9.0, 9.0, 0.0], "Close": [10.0, 19.0, 0.0],
+        "Adj Close": [10.0, 19.0, 0.0],
+    }, index=index)
+    _, report = assess_price_quality({"AAA": frame}, now="2026-10-13")
+    row = report.iloc[0]
+    assert row["Quality"] == "REVIEW"
+    assert row["Calendar days stale"] > 7
+    assert row["Invalid price rows"] == 1
+    assert row["Max abs daily return %"] >= 30
