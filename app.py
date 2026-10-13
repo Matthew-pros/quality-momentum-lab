@@ -85,25 +85,59 @@ def technical_row(ticker, close, period):
     ma50 = c.rolling(50).mean().iloc[-1]
     ma200 = c.rolling(200).mean().iloc[-1]
     ma200_prev = c.rolling(200).mean().iloc[-21] if len(c) > 220 else np.nan
-    high55 = c.shift(1).rolling(55).max().iloc[-1]
-    low50 = c.shift(1).rolling(50).min().iloc[-1]
-    atr_now = atr.iloc[-1]
+    true_range = pd.concat([
+        (h - l),
+        (h - c.shift(1)).abs(),
+        (l - c.shift(1)).abs()
+    ], axis=1).max(axis=1)
+    atr20 = true_range.ewm(alpha=1/20, min_periods=20, adjust=False).mean()
+    high55 = h.shift(1).rolling(55).max().iloc[-1]
+    low50 = l.shift(1).rolling(50).min().iloc[-1]
     price = c.iloc[-1]
     return {
         "Ticker": ticker, "Price": price, "12-1M": r_12_1, "6-1M": r_6_1,
         "MA50": ma50, "MA200": ma200, "MA200 rising": bool(ma200 > ma200_prev) if pd.notna(ma200_prev) else False,
-        "ADX14": adx.iloc[-1], "ATR20%": (atr.rolling(20).mean().iloc[-1] / price * 100),
+        "ADX14": adx.iloc[-1], "ATR20%": (atr20.iloc[-1] / price * 100),
         "Breakout55": bool(price > high55) if pd.notna(high55) else False,
         "Below 50d low": bool(price < low50) if pd.notna(low50) else False,
         "Trend OK": bool(price > ma200 and ma50 > ma200 and ma200 > ma200_prev) if pd.notna(ma200_prev) else False
     }
 
 def percentile_score(series, higher_better=True):
-    s = series.copy()
-    if s.notna().sum() < 2:
-        return pd.Series(50.0, index=s.index)
-    out = s.rank(pct=True, ascending=higher_better) * 100
-    return out.fillna(50.0)
+    """Cross-sectional percentile; missing observations remain missing."""
+    s = pd.to_numeric(series, errors="coerce")
+    observed = s.notna()
+    result = pd.Series(np.nan, index=s.index, dtype=float)
+    if observed.sum() == 0:
+        return result
+    if observed.sum() == 1:
+        result.loc[observed] = 50.0
+        return result
+    result.loc[observed] = s.loc[observed].rank(pct=True, ascending=higher_better) * 100
+    return result
+
+
+def weighted_average(frame, weights, default=50.0):
+    """Row-wise weighted mean that does not treat missing data as a real score."""
+    numerator = pd.Series(0.0, index=frame.index)
+    denominator = pd.Series(0.0, index=frame.index)
+    for column, weight in weights.items():
+        values = pd.to_numeric(frame[column], errors="coerce")
+        valid = values.notna()
+        numerator.loc[valid] += values.loc[valid] * weight
+        denominator.loc[valid] += weight
+    result = numerator / denominator.replace(0, np.nan)
+    return result.fillna(default)
+
+
+def combine_percentiles(frame, features):
+    """Features are (column, weight, higher_is_better) tuples."""
+    ranked = pd.DataFrame(index=frame.index)
+    weights = {}
+    for column, weight, higher_better in features:
+        ranked[column] = percentile_score(frame[column], higher_better=higher_better)
+        weights[column] = weight
+    return weighted_average(ranked, weights)
 
 def get_fundamentals(ticker):
     info = load_info(ticker)
@@ -118,6 +152,12 @@ def get_fundamentals(ticker):
         "ROE %": safe_num(info.get("returnOnEquity")) * 100 if info.get("returnOnEquity") is not None else np.nan,
         "Debt/Equity": safe_num(info.get("debtToEquity")),
         "FCF": safe_num(info.get("freeCashflow")),
+        "FCF margin %": (
+            safe_num(info.get("freeCashflow")) / safe_num(info.get("totalRevenue")) * 100
+            if pd.notna(safe_num(info.get("freeCashflow")))
+            and pd.notna(safe_num(info.get("totalRevenue")))
+            and safe_num(info.get("totalRevenue")) > 0 else np.nan
+        ),
         "Profit margin %": safe_num(info.get("profitMargins")) * 100 if info.get("profitMargins") is not None else np.nan,
         "Revenue growth %": safe_num(info.get("revenueGrowth")) * 100 if info.get("revenueGrowth") is not None else np.nan,
         "Earnings growth %": safe_num(info.get("earningsGrowth")) * 100 if info.get("earningsGrowth") is not None else np.nan,
@@ -134,11 +174,11 @@ def run_monthly_backtest(close, top_n=5, cost_bps=10, initial=10000):
     monthly = px.resample("ME").last().dropna(how="all")
     if len(monthly) < 14:
         return None, None
-    rets = monthly.pct_change()
+    rets = monthly.pct_change(fill_method=None)
     rows = []
     equity = initial
     prev = set()
-    for i in range(13, len(monthly)-1):
+    for i in range(13, len(monthly)):
         # 12-1M momentum using month-end data, skipping latest month
         mom12 = monthly.iloc[i-1] / monthly.iloc[i-12] - 1
         mom6 = monthly.iloc[i-1] / monthly.iloc[i-6] - 1
@@ -148,21 +188,28 @@ def run_monthly_backtest(close, top_n=5, cost_bps=10, initial=10000):
         picks = set(eligible.head(top_n).index)
         if not picks:
             picks = set()
-        turnover = len(picks.symmetric_difference(prev)) / max(1, 2*top_n)
+        old_weights = {ticker: 1.0 / len(prev) for ticker in prev} if prev else {}
+        new_weights = {ticker: 1.0 / len(picks) for ticker in picks} if picks else {}
+        traded_tickers = set(old_weights) | set(new_weights)
+        # Gross traded notional: buys + sells as a fraction of portfolio value.
+        turnover = sum(abs(new_weights.get(t, 0.0) - old_weights.get(t, 0.0)) for t in traded_tickers)
         cost = turnover * cost_bps / 10000
-        next_ret = rets.iloc[i+1].reindex(list(picks)).dropna().mean() if picks else 0.0
+        selected_returns = rets.iloc[i].reindex(list(picks)) if picks else pd.Series(dtype=float)
+        # Explicitly keep equal weights if a selected name has a missing monthly return.
+        next_ret = selected_returns.fillna(0.0).mean() if picks else 0.0
         strat_ret = (next_ret if pd.notna(next_ret) else 0.0) - cost
         equity *= (1 + strat_ret)
-        rows.append({"Date": monthly.index[i+1], "Return": strat_ret, "Equity": equity, "Holdings": ", ".join(sorted(picks)), "Turnover proxy": turnover})
+        rows.append({"Date": monthly.index[i], "Return": strat_ret, "Equity": equity, "Holdings": ", ".join(sorted(picks)), "Gross turnover": turnover})
         prev = picks
     if not rows:
         return None, None
     curve = pd.DataFrame(rows).set_index("Date")
-    years = max((curve.index[-1] - curve.index[0]).days / 365.25, 0.1)
+    years = len(curve) / 12.0
     cagr = (curve["Equity"].iloc[-1] / initial) ** (1/years) - 1
     vol = curve["Return"].std(ddof=1) * np.sqrt(12)
     sharpe = (curve["Return"].mean() * 12) / vol if vol > 0 else np.nan
-    dd = curve["Equity"] / curve["Equity"].cummax() - 1
+    high_water = np.maximum.accumulate(np.r_[initial, curve["Equity"].to_numpy()])[1:]
+    dd = curve["Equity"] / high_water - 1
     metrics = {
         "CAGR": cagr, "Volatility": vol, "Sharpe (rf=0)": sharpe,
         "Max drawdown": dd.min(), "Final equity": curve["Equity"].iloc[-1],
@@ -201,6 +248,35 @@ if st.session_state.run:
         st.error("Data se nepodařilo načíst. Zkontroluj tickery nebo to zkus později.")
         st.stop()
 
+    latest_data_date = close.dropna(how="all").index.max()
+    price_qc_rows = []
+    for ticker in tickers:
+        values = close[ticker].dropna() if ticker in close.columns else pd.Series(dtype=float)
+        price_qc_rows.append({
+            "Ticker": ticker,
+            "Rows with price": int(values.notna().sum()),
+            "First date": values.index.min().date().isoformat() if not values.empty else None,
+            "Last date": values.index.max().date().isoformat() if not values.empty else None,
+            "Missing price series": values.empty
+        })
+    price_qc = pd.DataFrame(price_qc_rows)
+    st.caption(
+        f"Kontrola cenových dat: poslední dostupné datum {latest_data_date.date().isoformat()} · "
+        f"řady s cenami {int((~price_qc['Missing price series']).sum())}/{len(tickers)} · "
+        "zdroj Yahoo Finance přes yfinance"
+    )
+    with st.expander("Kontrola úplnosti cenových dat"):
+        st.dataframe(price_qc, use_container_width=True, hide_index=True)
+        missing_tickers = price_qc.loc[price_qc["Missing price series"], "Ticker"].tolist()
+        if missing_tickers:
+            st.warning("Chybí cenová řada pro: " + ", ".join(missing_tickers))
+        st.download_button(
+            "Stáhnout kontrolu cenových dat CSV",
+            price_qc.to_csv(index=False).encode("utf-8"),
+            "price_data_quality.csv",
+            "text/csv"
+        )
+
     tab1, tab2, tab3 = st.tabs(["🔎 Screener", "📉 Backtest (experimentální)", "📚 Data & metodika"])
     with tab1:
         st.subheader("Technické a fundamentální skóre")
@@ -220,37 +296,57 @@ if st.session_state.run:
             st.warning("Nedostatek dat pro výpočet indikátorů. Zkus delší historii nebo jiné tickery.")
         else:
             df = pd.DataFrame(rows)
-            df["Momentum score"] = (
-                percentile_score(df["12-1M"]) * 0.5 + percentile_score(df["6-1M"]) * 0.5
+            df["_Forward P/E positive"] = df["Forward P/E"].where(df["Forward P/E"] > 0)
+            df["_Price/Sales positive"] = df["Price/Sales"].where(df["Price/Sales"] > 0)
+            df["Momentum score"] = combine_percentiles(df, [
+                ("12-1M", 0.5, True), ("6-1M", 0.5, True)
+            ])
+            df["Quality proxy"] = combine_percentiles(df, [
+                ("ROE %", 0.25, True),
+                ("Profit margin %", 0.25, True),
+                ("FCF margin %", 0.25, True),
+                ("Revenue growth %", 0.25, True)
+            ])
+            # Positive valuation multiples only; negative P/E is not treated as "cheap".
+            df["Value proxy"] = combine_percentiles(df, [
+                ("_Forward P/E positive", 0.6, False),
+                ("_Price/Sales positive", 0.4, False)
+            ])
+            df["Growth proxy"] = combine_percentiles(df, [
+                ("Revenue growth %", 0.5, True),
+                ("Earnings growth %", 0.5, True)
+            ])
+            df["Trend score"] = np.where(
+                df["Trend OK"],
+                50 + df["ADX14"].clip(0, 50).fillna(0),
+                0
             )
-            df["Quality proxy"] = (
-                percentile_score(df["ROE %"]) * 0.30
-                + percentile_score(df["Profit margin %"]) * 0.25
-                + percentile_score(df["FCF"]) * 0.25
-                + percentile_score(df["Revenue growth %"]) * 0.20
-            )
-            # Valuation score: cheaper multiples rank higher, only where reported.
-            pe_score = percentile_score(df["Forward P/E"], higher_better=False)
-            ps_score = percentile_score(df["Price/Sales"], higher_better=False)
-            df["Value proxy"] = pe_score * 0.6 + ps_score * 0.4
-            df["Trend score"] = (
-                df["Trend OK"].astype(float) * 50
-                + (df["ADX14"].clip(0, 50) / 50 * 50).fillna(0)
-            )
-            df["Composite score"] = (
-                df["Quality proxy"] * 0.25
-                + df["Value proxy"] * 0.20
-                + percentile_score(df["Revenue growth %"] + df["Earnings growth %"]) * 0.20
-                + df["Momentum score"] * 0.20
-                + df["Trend score"] * 0.10
-                + 50 * 0.05
+            score_parts = pd.DataFrame({
+                "Quality": df["Quality proxy"],
+                "Value": df["Value proxy"],
+                "Growth": df["Growth proxy"],
+                "Momentum": df["Momentum score"],
+                "Trend": df["Trend score"]
+            }, index=df.index)
+            df["Composite score"] = weighted_average(score_parts, {
+                "Quality": 0.28, "Value": 0.22, "Growth": 0.18,
+                "Momentum": 0.22, "Trend": 0.10
+            })
+            fundamental_columns = [
+                "ROE %", "Profit margin %", "FCF margin %",
+                "Revenue growth %", "Earnings growth %", "Forward P/E", "Price/Sales"
+            ]
+            df["Fundamental coverage %"] = df[fundamental_columns].notna().mean(axis=1) * 100
+            df["Fundamental status"] = np.where(
+                df["Fundamental coverage %"] >= 70, "Adequate snapshot",
+                np.where(df["Fundamental coverage %"] >= 40, "Partial data", "Low coverage")
             )
             df["Signal"] = np.select(
                 [df["Below 50d low"], df["Trend OK"] & df["Breakout55"] & (df["Composite score"] >= 65), df["Trend OK"]],
                 ["Review / exit trigger", "Breakout candidate", "Trend: watch"],
                 default="No entry"
             )
-            display_cols = ["Ticker","Company","Sector","Price","Composite score","Quality proxy","Value proxy","Momentum score","12-1M","6-1M","ADX14","ATR20%","Trend OK","Breakout55","P/E","Forward P/E","ROE %","FCF","Signal"]
+            display_cols = ["Ticker","Company","Sector","Price","Composite score","Quality proxy","Value proxy","Growth proxy","Momentum score","Fundamental coverage %","Fundamental status","12-1M","6-1M","ADX14","ATR20%","Trend OK","Breakout55","P/E","Forward P/E","ROE %","FCF margin %","Signal"]
             display_cols = [c for c in display_cols if c in df.columns]
             shown = df.sort_values("Composite score", ascending=False)[display_cols].copy()
             st.dataframe(shown, use_container_width=True, hide_index=True, column_config={
@@ -274,7 +370,7 @@ if st.session_state.run:
 
     with tab2:
         st.subheader("Základní měsíční momentum backtest")
-        st.warning("Tento test je pouze prototyp: používá současný seznam tickerů a nezohledňuje historické delistované firmy, historické fundamenty, přesné daňové loty ani veškeré dividendové/FX/tax scénáře. Výsledky nelze považovat za důkaz obchodovatelnosti.")
+        st.warning("Tento test je pouze prototyp: používá současný seznam tickerů, postrádá historické delistované firmy a point-in-time fundamenty, a nezohledňuje daně. Náklady v bps se aplikují na hrubě obchodovaný objem (nákupy + prodeje). Výsledky nejsou důkazem obchodovatelnosti.")
         curve, metrics = run_monthly_backtest(close, top_n=top_n, cost_bps=cost_bps, initial=initial)
         if curve is None:
             st.warning("Nedostatek dat pro backtest. Zvol delší historii a širší seznam tickerů.")
