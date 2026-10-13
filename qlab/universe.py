@@ -25,20 +25,34 @@ def parse_universe_membership(source) -> pd.DataFrame:
         raise ValueError(
             "Universe membership CSV requires Ticker and Start date columns; End date is optional."
         )
-    frame = pd.DataFrame({
-        "Ticker": raw[ticker_col].astype(str).str.upper().str.strip(),
-        "Start date": pd.to_datetime(raw[start_col], errors="coerce"),
-        "End date": pd.to_datetime(raw[end_col], errors="coerce") if end_col else pd.NaT,
-    })
-    if frame["Ticker"].eq("").any() or frame["Ticker"].eq("NAN").any():
+    ticker_values = raw[ticker_col].astype("string").str.upper().str.strip()
+    if ticker_values.isna().any() or ticker_values.isin(["", "NAN", "<NA>", "NONE"]).any():
         raise ValueError("Universe membership contains an empty Ticker.")
-    if frame["Start date"].isna().any():
+
+    start_text = raw[start_col].astype("string").str.strip()
+    start_blank = raw[start_col].isna() | start_text.eq("")
+    start_values = pd.to_datetime(start_text.mask(start_blank), errors="coerce", utc=True)
+    if start_blank.any() or start_values.isna().any():
         raise ValueError("Every membership interval needs a valid Start date.")
-    for column in ["Start date", "End date"]:
-        values = pd.to_datetime(frame[column], errors="coerce")
-        if getattr(values.dt, "tz", None) is not None:
-            values = values.dt.tz_localize(None)
-        frame[column] = values.dt.normalize()
+    start_values = start_values.dt.tz_localize(None).dt.normalize()
+
+    if end_col:
+        end_text = raw[end_col].astype("string").str.strip()
+        end_blank = raw[end_col].isna() | end_text.eq("")
+        end_values = pd.to_datetime(end_text.mask(end_blank), errors="coerce", utc=True)
+        malformed_end = (~end_blank) & end_values.isna()
+        if malformed_end.any():
+            raise ValueError("A non-empty End date must be a valid date; leave it blank only for open-ended membership.")
+        end_values = end_values.dt.tz_localize(None).dt.normalize()
+        end_values = end_values.mask(end_blank)
+    else:
+        end_values = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+
+    frame = pd.DataFrame({
+        "Ticker": ticker_values.astype(str),
+        "Start date": start_values,
+        "End date": end_values,
+    })
     invalid = frame["End date"].notna() & frame["End date"].lt(frame["Start date"])
     if invalid.any():
         raise ValueError("End date cannot be earlier than Start date.")
