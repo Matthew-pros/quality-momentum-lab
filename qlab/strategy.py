@@ -259,38 +259,74 @@ def select_with_hysteresis(
     min_improvement: float = 7.0,
     exit_score_floor: float = 30.0,
     max_replacements: int = 2,
+    sector_map: dict[str, str] | None = None,
+    max_sector_positions: int | None = None,
 ) -> set[str]:
     valid = scores.dropna()
     valid = valid[eligible.reindex(valid.index).fillna(False).astype(bool)]
-    ranked = valid.sort_values(ascending=False)
-    ranked_names = list(ranked.index)
+    ranked = valid.sort_values(ascending=False, kind="mergesort")
+    ranked_names = [ticker for ticker in sorted(ranked.index, key=lambda t: (-float(ranked[t]), str(t)))]
+    sectors = sector_map or {}
+    sector_limit = int(max_sector_positions) if max_sector_positions is not None else None
+
+    def sector_of(ticker):
+        value = str(sectors.get(str(ticker), "Unclassified") or "Unclassified").strip()
+        return value if value and value.lower() not in {"unclassified", "unknown", "none", "nan"} else None
+
+    def may_add(ticker, selected):
+        sector = sector_of(ticker)
+        if sector_limit is None or sector_limit <= 0 or sector is None:
+            return True
+        same_sector = sum(1 for held in selected if sector_of(held) == sector)
+        return same_sector < sector_limit
+
+    def initial_fill():
+        chosen = []
+        for ticker in ranked_names:
+            if may_add(ticker, chosen):
+                chosen.append(ticker)
+            if len(chosen) >= top_n:
+                break
+        return set(chosen)
+
     if not previous:
-        # Fill initial portfolio once; the replacement cap governs subsequent rebalance dates.
-        return set(ranked_names[:top_n])
+        # Initial construction fills the target count where possible; no replacement cap yet.
+        return initial_fill()
+
     incumbents = [
         ticker for ticker in previous
         if ticker in ranked.index and float(ranked[ticker]) >= exit_score_floor
     ]
-    # Use a stable score/ticker order; iterating a set directly can make tied decisions
-    # differ across processes because set iteration order is not a reproducibility contract.
-    current = sorted(incumbents, key=lambda ticker: (-float(ranked[ticker]), str(ticker)))
+    # Stable score/ticker ordering also gives a deterministic choice when a sector cap
+    # forces an existing concentration to be reduced.
+    current = []
+    for ticker in sorted(incumbents, key=lambda name: (-float(ranked[name]), str(name))):
+        if may_add(ticker, current):
+            current.append(ticker)
     replacements = 0
-    # Mandatory exits can leave vacancies. Limit replacement entries to the configured
-    # count so that a rule violation does not trigger an uncontrolled full rebalance.
+
+    # Mandatory exits can leave vacancies. Limit replacement entries to the configured count.
     for ticker in ranked_names:
         if len(current) >= top_n or replacements >= max_replacements:
             break
-        if ticker not in current:
+        if ticker not in current and may_add(ticker, current):
             current.append(ticker)
             replacements += 1
+
     while len(current) >= top_n and top_n > 0 and replacements < max_replacements:
         incumbents = [t for t in current if t in ranked.index]
-        challengers = [t for t in ranked_names if t not in current]
-        if not incumbents or not challengers:
+        if not incumbents:
             break
         weakest = min(incumbents, key=lambda t: (float(ranked[t]), str(t)))
-        challenger = challengers[0]
-        if float(ranked[challenger]) < float(ranked[weakest]) + min_improvement:
+        challenger = None
+        for candidate in ranked_names:
+            if candidate in current:
+                continue
+            trial = [t for t in current if t != weakest]
+            if may_add(candidate, trial):
+                challenger = candidate
+                break
+        if challenger is None or float(ranked[challenger]) < float(ranked[weakest]) + min_improvement:
             break
         current.remove(weakest)
         current.append(challenger)
