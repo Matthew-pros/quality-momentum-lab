@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import time
@@ -16,6 +17,7 @@ from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.tax_lots import fifo_ledger
+from qlab.universe import parse_universe_membership, tickers_in_membership_file, universe_members_asof
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
 APP_VERSION = "2.3.0"
@@ -180,6 +182,14 @@ with st.sidebar:
         disabled=price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
         help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume. Jedna řádka na ticker a datum."
     )
+    universe_history_upload = st.file_uploader(
+        "Historické složení investičního univerza (volitelné CSV)",
+        type=["csv"],
+        key="universe_membership_csv",
+        disabled=is_demo_mode or price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
+        help="Intervaly členství: Ticker,Start date,End date. End date může být prázdné pro otevřený interval. Zahrň do OHLCV všechna historická aktiva včetně delistovaných, máš-li jejich historii."
+    )
+    st.caption("Point-in-time univerzum snižuje zkreslení pouze tehdy, když CSV obsahuje úplné historické členství a OHLCV řady všech tehdejších titulů včetně delistovaných.")
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
     if is_demo_mode:
         st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
@@ -242,6 +252,17 @@ universe = (
     else [x for x in dict.fromkeys(s.strip().upper() for s in ticker_text.split(",") if s.strip()) if x not in EXCLUDED_FUNDS]
 )
 benchmark_ticker = "SIM_BENCHMARK" if is_demo_mode else "SPY"
+universe_history = None
+universe_history_signature = "static-universe"
+if universe_history_upload is not None:
+    try:
+        universe_history = parse_universe_membership(io.BytesIO(universe_history_upload.getvalue()))
+        historical_tickers = tickers_in_membership_file(universe_history)
+        universe = list(dict.fromkeys(universe + [ticker for ticker in historical_tickers if ticker not in EXCLUDED_FUNDS]))
+        universe_history_signature = hashlib.sha256(universe_history_upload.getvalue()).hexdigest()
+    except Exception as exc:
+        st.error(f"Historické složení univerza není validní: {type(exc).__name__}: {exc}")
+        st.stop()
 if len(universe) < 2:
     st.error("Zadej alespoň dvě akcie. Benchmarková ETF SPY/ACWI/QQQ/VTI se automaticky vyřazují z investičního univerza.")
     st.stop()
