@@ -1231,3 +1231,39 @@ def test_backtest_fails_fast_when_point_in_time_universe_lists_unavailable_ohlcv
             use_fundamentals=False,
             universe_history=history,
         )
+
+
+def test_csv_price_adapter_preserves_currency_metadata_and_rejects_mixed_currency_within_ticker():
+    import io
+    from qlab.data import load_ohlcv_csv
+
+    csv = pd.DataFrame([
+        {"Date":"2025-01-02","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10,"Currency":"USD"},
+        {"Date":"2025-01-03","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10.5,"Currency":"USD"},
+        {"Date":"2025-01-02","Ticker":"BBB","Open":20,"High":21,"Low":19,"Close":20,"Currency":"EUR"},
+        {"Date":"2025-01-03","Ticker":"BBB","Open":20,"High":21,"Low":19,"Close":20.5,"Currency":"EUR"},
+    ]).to_csv(index=False).encode("utf-8")
+    prices, report = load_ohlcv_csv(io.BytesIO(csv), expected_tickers=["AAA","BBB"])
+    assert prices["AAA"].attrs["currency"] == "USD"
+    assert prices["BBB"].attrs["currency"] == "EUR"
+    currency = report.set_index("Ticker")["Currency"].to_dict()
+    assert currency == {"AAA":"USD","BBB":"EUR"}
+
+    mixed = pd.DataFrame([
+        {"Date":"2025-01-02","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10,"Currency":"USD"},
+        {"Date":"2025-01-03","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10.5,"Currency":"EUR"},
+    ]).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="Currency changes within the imported series"):
+        load_ohlcv_csv(io.BytesIO(mixed), expected_tickers=["AAA"])
+
+
+def test_csv_price_adapter_requires_currency_for_all_rows_when_currency_column_is_present():
+    import io
+    from qlab.data import load_ohlcv_csv
+
+    payload = pd.DataFrame([
+        {"Date":"2025-01-02","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10,"Currency":"USD"},
+        {"Date":"2025-01-03","Ticker":"AAA","Open":10,"High":11,"Low":9,"Close":10.5,"Currency":""},
+    ]).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="Currency is blank on one or more rows"):
+        load_ohlcv_csv(io.BytesIO(payload), expected_tickers=["AAA"])
