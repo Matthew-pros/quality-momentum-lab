@@ -835,3 +835,12 @@ def test_moving_block_bootstrap_rejects_invalid_returns_and_too_few_samples():
     good = pd.DataFrame({"Net return":[0.01] * 12})
     with pytest.raises(ValueError, match="between 100 and 10,000"):
         moving_block_bootstrap_uncertainty(good, bootstrap_samples=20, block_length=2)
+
+
+def test_dcf_rejects_growth_below_minus_100_percent_and_noninteger_horizon():
+    from qlab.valuation import calculate_fcfe_dcf
+
+    with pytest.raises(ValueError, match="greater than -100%"):
+        calculate_fcfe_dcf(100, -1.1, 0.10, 0.02, years=5)
+    with pytest.raises(ValueError, match="integer from 1 to 20"):
+        calculate_fcfe_dcf(100, 0.03, 0.10, 0.02, years=2.5)
