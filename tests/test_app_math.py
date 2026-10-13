@@ -1084,3 +1084,43 @@ def test_precomputed_monthly_cross_sections_match_direct_backtest_results():
             assert pd.isna(cached_metrics[key])
         else:
             assert cached_metrics[key] == pytest.approx(direct_metrics[key])
+
+
+def test_daily_atr_stop_does_not_trigger_on_raw_price_split_when_adjusted_series_is_flat():
+    from qlab.strategy import _simulate_position_month
+
+    index = pd.bdate_range("2024-01-01", periods=360)
+    split_start = 321
+    raw_close = np.full(len(index), 100.0)
+    raw_open = np.full(len(index), 100.0)
+    raw_high = np.full(len(index), 101.0)
+    raw_low = np.full(len(index), 99.0)
+    adjustment = np.ones(len(index))
+    # A two-for-one split halves all raw OHLC prices; Adj Close stays on a
+    # continuous total-return basis. No adjusted OHLC columns are supplied,
+    # forcing the stop simulator to derive adjustment factors itself.
+    raw_close[split_start:] = 50.0
+    raw_open[split_start:] = 50.0
+    raw_high[split_start:] = 50.5
+    raw_low[split_start:] = 49.5
+    adjustment[split_start:] = 2.0
+    adjusted_close = raw_close * adjustment
+    frame = pd.DataFrame({
+        "Open": raw_open, "High": raw_high, "Low": raw_low,
+        "Close": raw_close, "Adj Close": adjusted_close,
+        "Volume": 100_000,
+    }, index=index)
+    # Deterministic adjusted ATR/indicator path. The stop at 97 is far below the
+    # correctly-adjusted post-split low (99); comparing raw low would falsely exit.
+    indicators = pd.DataFrame({
+        "ATR20": np.full(len(index), 1.0),
+        "Low50 prior": np.full(len(index), 95.0),
+    }, index=index)
+    signal_date = index[320]
+    ret, reason, exit_date, _ = _simulate_position_month(
+        frame, indicators, signal_date, index[340],
+        stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
+    )
+    assert reason == "HOLD"
+    assert exit_date == ""
+    assert ret == pytest.approx(0.0)
