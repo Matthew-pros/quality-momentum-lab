@@ -452,3 +452,41 @@ def test_monthly_backtest_supports_daily_stop_mode_and_audit_columns():
     assert "Stops triggered" in curve.columns
     assert "Stop mode" in audit.columns
     assert "Ticker returns" in audit.columns
+    assert "Stop turnover" in curve.columns
+    assert (curve["Gross turnover"] >= curve["Rebalance turnover"] - 1e-12).all()
+    assert np.allclose(curve["Transaction cost"], curve["Gross turnover"] * 10 / 10_000)
+
+
+def test_atr_trailing_stop_carries_high_water_from_prior_month_not_all_time_peak():
+    from qlab.strategy import calculate_indicators, _simulate_position_month
+
+    index = pd.bdate_range("2024-01-01", periods=500)
+    close = pd.Series(100.0, index=index)
+    frame = pd.DataFrame({
+        "Open": close.copy(), "High": close + 1.0, "Low": close - 1.0,
+        "Close": close.copy(), "Adj Close": close.copy(), "Volume": 100_000,
+    }, index=index)
+    first_signal = index[300]
+    spike_date = index[301]
+    frame.loc[spike_date, ["Open","High","Low","Close","Adj Close"]] = [119.0,121.0,118.0,120.0,120.0]
+    frame.loc[index[302:321], ["Open","High","Low","Close","Adj Close"]] = [120.0,121.0,119.0,120.0,120.0]
+    indicators = calculate_indicators(frame)
+    _, reason1, _, high_water = _simulate_position_month(
+        frame, indicators, first_signal, index[320], stop_mode="ATR trailing stop", stop_atr_multiple=3.0
+    )
+    assert reason1 == "HOLD"
+    assert high_water == pytest.approx(121.0)
+
+    # The incumbent's stored high-water makes a stop active even though the
+    # current entry close alone would produce a lower stop level.
+    second_signal = index[320]
+    stop_date = index[321]
+    frame.loc[stop_date, ["Open","High","Low","Close","Adj Close"]] = [114.0,116.0,113.0,115.0,115.0]
+    indicators = calculate_indicators(frame)
+    ret, reason2, exit_date, _ = _simulate_position_month(
+        frame, indicators, second_signal, index[340],
+        stop_mode="ATR trailing stop", stop_atr_multiple=3.0, prior_high_water=high_water
+    )
+    assert reason2 == "ATR trailing stop"
+    assert exit_date == stop_date.date().isoformat()
+    assert ret < 0
