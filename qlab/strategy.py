@@ -76,6 +76,19 @@ def calculate_indicators(frame: pd.DataFrame) -> pd.DataFrame:
     out["Volatility20%"] = out["Daily return"].rolling(20, min_periods=20).std() * np.sqrt(252) * 100
     return out.replace([np.inf, -np.inf], np.nan)
 
+def _precompute_indicator_cache(prices: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Compute daily indicators once for a fixed price dataset shared by parameter runs."""
+    cache: dict[str, pd.DataFrame] = {}
+    for ticker, frame in prices.items():
+        if frame is None or frame.empty:
+            continue
+        source_col = "Adj Close" if "Adj Close" in frame else "Close"
+        if source_col not in frame or len(_num(frame[source_col]).dropna()) < 300:
+            continue
+        cache[ticker] = calculate_indicators(frame)
+    return cache
+
+
 def percentile_score(series: pd.Series, higher_better: bool = True) -> pd.Series:
     """Rank valid observations only; missing inputs remain missing, never fake-neutral."""
     values = _num(series)
@@ -569,6 +582,7 @@ def run_monthly_backtest(
     slippage_bps: float = 0.0,
     evaluation_start_date: pd.Timestamp | str | None = None,
     evaluation_end_date: pd.Timestamp | str | None = None,
+    precomputed_indicators: dict[str, pd.DataFrame] | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -597,7 +611,8 @@ def run_monthly_backtest(
     if not prices:
         return None, None, None
     adjusted = {}
-    indicator_cache = {}
+    indicator_cache: dict[str, pd.DataFrame] = {}
+    shared_indicators = precomputed_indicators or {}
     for ticker, frame in prices.items():
         if frame is None or frame.empty:
             continue
@@ -605,7 +620,11 @@ def run_monthly_backtest(
         series = _num(frame[col]).dropna()
         if len(series) >= 300:
             adjusted[ticker] = series
-            indicator_cache[ticker] = calculate_indicators(frame)
+            cached_indicators = shared_indicators.get(ticker)
+            if cached_indicators is not None and not cached_indicators.empty:
+                indicator_cache[ticker] = cached_indicators
+            else:
+                indicator_cache[ticker] = calculate_indicators(frame)
     if len(adjusted) < 2:
         return None, None, None
     daily_prices = pd.DataFrame(adjusted).sort_index()
