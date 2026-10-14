@@ -1648,3 +1648,43 @@ def test_adjusted_ohlc_stop_uses_same_price_scale_as_adjusted_atr():
     assert exit_date == ""
     assert ret == pytest.approx(0.0)
     assert high_water == pytest.approx(stored_high)
+
+
+def test_position_sizing_reports_invalid_price_or_atr_rows_instead_of_silently_dropping_them():
+    from qlab.strategy import calculate_position_sizes
+
+    screener = pd.DataFrame([
+        {"Ticker":"AAA","Price":100.0,"ATR20":5.0},
+        {"Ticker":"BBB","Price":50.0,"ATR20":np.nan},
+        {"Ticker":"CCC","Price":0.0,"ATR20":2.0},
+    ])
+    sized = calculate_position_sizes(
+        screener, ["AAA","BBB","CCC"], capital=10_000,
+        risk_budget_pct=0.5, stop_atr_multiple=3.0,
+        max_position_pct=20, max_total_exposure_pct=95,
+        max_total_risk_pct=3.0,
+    ).set_index("Ticker")
+    assert set(sized.index) == {"AAA","BBB","CCC"}
+    assert sized.loc["BBB","Sizing status"].startswith("INSUFFICIENT DATA")
+    assert sized.loc["CCC","Sizing status"].startswith("INSUFFICIENT DATA")
+    assert sized.loc["BBB","Shares (risk-sized, capped)"] == 0
+    assert sized.loc["BBB","Initial risk budget"] == 0
+    assert np.isfinite(sized["Initial risk budget"]).all()
+
+
+def test_position_sizing_rejects_duplicate_tickers_and_caps_above_100_percent():
+    from qlab.strategy import calculate_position_sizes
+
+    screener = pd.DataFrame([
+        {"Ticker":"AAA","Price":100.0,"ATR20":5.0},
+        {"Ticker":"aaa","Price":101.0,"ATR20":5.1},
+    ])
+    with pytest.raises(ValueError, match="duplicate ticker"):
+        calculate_position_sizes(screener, ["AAA"], 10_000)
+
+    one = pd.DataFrame([{"Ticker":"AAA","Price":100.0,"ATR20":5.0}])
+    with pytest.raises(ValueError, match="max_position_pct cannot exceed 100"):
+        calculate_position_sizes(one, ["AAA"], 10_000, max_position_pct=101)
+
+    with pytest.raises(ValueError, match="Selected tickers contain duplicates"):
+        calculate_position_sizes(one, ["AAA","aaa"], 10_000)
