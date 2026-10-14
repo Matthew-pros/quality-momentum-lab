@@ -1178,7 +1178,8 @@ def cost_sensitivity(
                 f"Cost scenario {float(bps):g} bps causes a monthly return at or below -100%; "
                 "use a lower cost assumption or verify turnover."
             )
-        equity_before = float(initial) * (1 + net).cumprod().shift(1).fillna(float(initial))
+        equity_before = float(initial) * (1 + net).cumprod().shift(1)
+        equity_before = equity_before.fillna(float(initial))
         cost_value = estimated_cost * equity_before
         equity = float(initial) * (1 + net).cumprod()
         final_equity = float(equity.iloc[-1])
