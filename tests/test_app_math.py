@@ -445,6 +445,34 @@ def test_daily_atr_trailing_stop_uses_gap_open_and_returns_exit_reason():
     assert ret == pytest.approx(90.0 / entry_adjusted - 1)
 
 
+def test_daily_stop_simulation_fails_closed_on_missing_ohlc_bar():
+    from qlab.strategy import calculate_indicators, _simulate_position_month
+
+    index = pd.bdate_range("2024-01-01", periods=360)
+    close = pd.Series(50.0 + np.arange(len(index)) * 0.20, index=index)
+    frame = pd.DataFrame({
+        "Open": close - 0.10,
+        "High": close + 1.0,
+        "Low": close - 1.0,
+        "Close": close,
+        "Adj Close": close,
+        "Volume": 500_000,
+    }, index=index)
+    signal_date = index[320]
+    bad_date = index[321]
+    frame.loc[bad_date, "Low"] = np.nan
+    indicators = calculate_indicators(frame)
+
+    ret, reason, exit_date, high_water = _simulate_position_month(
+        frame, indicators, signal_date, index[340],
+        stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
+    )
+    assert np.isnan(ret)
+    assert reason == "MISSING"
+    assert exit_date == bad_date.date().isoformat()
+    assert np.isnan(high_water)
+
+
 def test_monthly_backtest_supports_daily_stop_mode_and_audit_columns():
     from qlab.strategy import run_monthly_backtest
 
