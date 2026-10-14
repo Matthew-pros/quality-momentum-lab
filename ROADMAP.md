@@ -11,7 +11,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Počítat průraz z předchozích 20/55 denních high a ATR(20) z true range.
 - [x] Zachovat chybějící faktory jako chybějící; nevyplňovat je fiktivním neutrálním skóre 50.
 - [x] Přidat regresní testy indikátorů, časování, look-ahead, SEC as-of date, vah a FIFO.
-- [x] Přidat GitHub Actions test workflow s matice runtime Python 3.12 / 3.14 včetně offline Streamlit UI smoke testu.
+- [x] Přidat GitHub Actions matrix Python 3.12 / 3.14 včetně offline Streamlit UI smoke testu, coverage XML reportu, kontroly undefined names a `pip-audit` runtime závislostí.
 - [ ] Ověřit aktuální živou verzi na Streamlit Community Cloud a zkontrolovat log po posledních změnách.
 
 ## Fáze 1 — Data a provenance
@@ -91,9 +91,9 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
-- [x] Ověřit současnou sadu regresních testů v Pythonu 3.12 i 3.14; poslední ověřený kódový běh zahrnoval 86 testů.
+- [x] Ověřit současnou sadu regresních, integračních a UI smoke testů v Pythonu 3.12 i 3.14; poslední ověřený kódový běh zahrnoval 95 úspěšných testů na každé verzi.
 - [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
-- [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
+- [ ] Ověřit poslední nasazený build a reálný log Streamlit Cloud; GitHub Actions testuje kód, nikoli úspěšné sestavení/serving na platformě Streamlit.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
 - [x] Reportovat nejistotu pořadí měsíčních výnosů pomocí moving-block bootstrapu společně s volatilitou, drawdownem, obratem, benchmarkem a expozicemi.
 - [ ] Odhadnout statistickou významnost výhody při vícenásobném testování parametrů (deflated Sharpe / reality-check přístup) až s dostatečným bias-free datasetem.
