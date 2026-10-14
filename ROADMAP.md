@@ -1,4 +1,4 @@
-# Quality × Value × Momentum Lab — roadmap (research app v2.7.0)
+# Quality × Value × Momentum Lab — roadmap (research app v2.8.0)
 
 ## Finální cíl
 
@@ -8,6 +8,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Opravit časování signálu a návratnosti dalšího měsíce v backtestu.
 - [x] Počítat obrat jako hrubý zobchodovaný objem (nákupy + prodeje).
+- [x] Reportovat skutečně modelované transakční náklady v USD a jako podíl počátečního NAV; cost-sensitivity přepočítává náklady podle průběžného NAV a odmítá chybějící/nekonečné vstupy nebo scénáře s NAV ≤ 0.
+- [x] Validovat backtestové parametry fail-closed: skóre/práh ADX, stop násobek ATR, váhování, průraz, počet výměn, sektorový limit a náklady.
 - [x] Počítat průraz z předchozích 20/55 denních high a ATR(20) z true range.
 - [x] Zachovat chybějící faktory jako chybějící; nevyplňovat je fiktivním neutrálním skóre 50.
 - [x] Přidat regresní testy indikátorů, časování, look-ahead, SEC as-of date, vah a FIFO.
@@ -93,7 +95,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
-- [x] Přidat samostatný Playwright browser smoke check veřejné nasazené aplikace: spouští se po aktualizaci `main`, týdně a ručně; testuje health endpoint, viditelnost hlavičky, očekávaného build markeru a otevření Screener tabu.
+- [x] Přidat samostatný Playwright browser smoke check veřejné nasazené aplikace: spouští se po aktualizaci `main`, týdně a ručně; očekávaný build se čte z `APP_VERSION`, kontrola opakovaně načítá stránku během redeploy, testuje hlavičku a Screener tab a při chybě vytiskne diagnostiku a nahraje screenshot.
 - [x] Přidat unit testy URL validace deployment smoke scriptu; Playwright se načítá pouze při skutečné browser kontrole, nikoli do běžných runtime dependencies.
 - [x] Ověřit současnou sadu regresních, integračních a UI smoke testů v Pythonu 3.12 i 3.14; na commitu `02064ccc` prošlo 95 testů při 82,44% coverage v obou verzích.
 - [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
