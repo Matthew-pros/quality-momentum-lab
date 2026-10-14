@@ -1408,3 +1408,43 @@ def test_price_quality_report_uses_last_valid_bar_and_marks_fully_invalid_ticker
     assert bad["Rows"] == 0
     assert bad["Missing %"] == 100.0
     assert not pd.to_numeric(sanitized["BAD"]["Close"],errors="coerce").notna().any()
+
+
+def test_snapshot_review_flags_material_deterioration_and_preserves_hold_positions():
+    from qlab.review import compare_screener_snapshots
+
+    previous = pd.DataFrame([
+        {"Ticker":"AAA","Composite score":82.0,"Momentum 12-1M":0.35,"Trend OK":True,
+         "Below 50d low":False,"Signal":"Breakout candidate","Latest filing date":"2025-10-01"},
+        {"Ticker":"BBB","Composite score":61.0,"Momentum 12-1M":0.12,"Trend OK":True,
+         "Below 50d low":False,"Signal":"Trend watch","Latest filing date":"2025-10-01"},
+        {"Ticker":"CCC","Composite score":50.0,"Momentum 12-1M":0.10,"Trend OK":True,
+         "Below 50d low":False,"Signal":"Trend watch","Latest filing date":"2025-10-01"},
+    ])
+    current = pd.DataFrame([
+        {"Ticker":"AAA","Fundamental/composite score":81.0,"Momentum 12-1M":0.34,"Trend OK":True,
+         "Below 50d low":False,"Signal":"Breakout candidate","Latest filing date":"2025-10-01"},
+        {"Ticker":"BBB","Fundamental/composite score":48.0,"Momentum 12-1M":-0.02,"Trend OK":False,
+         "Below 50d low":True,"Signal":"Review / exit trigger","Latest filing date":"2025-12-01"},
+        {"Ticker":"DDD","Fundamental/composite score":55.0,"Momentum 12-1M":0.15,"Trend OK":True,
+         "Below 50d low":False,"Signal":"Trend watch","Latest filing date":"2025-12-01"},
+    ])
+    review = compare_screener_snapshots(current, previous, score_change_points=7, momentum_change=0.10)
+    by_ticker = review.set_index("Ticker")
+    assert by_ticker.loc["AAA","Review action"] == "NO MATERIAL CHANGE"
+    assert by_ticker.loc["BBB","Review action"] == "EXIT REVIEW — thesis/technical break"
+    assert by_ticker.loc["BBB","Material change"]
+    assert "fell by 13.0 points" in by_ticker.loc["BBB","Reasons"]
+    assert by_ticker.loc["DDD","Review action"] == "NEW — review"
+    assert by_ticker.loc["CCC","Review action"] == "NOT PRESENT — check data/universe"
+
+
+def test_snapshot_review_rejects_duplicate_tickers_and_bad_thresholds():
+    from qlab.review import compare_screener_snapshots
+
+    duplicated = pd.DataFrame([{"Ticker":"AAA","Composite score":50},{"Ticker":"aaa","Composite score":55}])
+    with pytest.raises(ValueError, match="duplicate ticker"):
+        compare_screener_snapshots(duplicated, duplicated)
+    good = pd.DataFrame([{"Ticker":"AAA","Composite score":50}])
+    with pytest.raises(ValueError, match="score_change_points"):
+        compare_screener_snapshots(good, good, score_change_points=-1)
