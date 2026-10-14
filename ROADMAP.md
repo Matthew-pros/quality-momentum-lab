@@ -25,7 +25,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Použít adjustované OHLC pro MA/ATR/breakout/denní stop, aby historické splitové úpravy nevytvářely falešné cenové skoky.
 - [ ] Porovnat konkrétní tickery s nezávislým cenovým zdrojem a ručně zkontrolovat vybrané XBRL metriky.
 - [ ] Doplnit automatickou kontrolu duplicit po transformaci, corporate actions a varování na příliš řídkou historii.
-- [ ] Vybrat zdroj s vhodnými právy pro veřejné použití a redistribuci; Yahoo/yfinance zůstává pouze zdrojem pro experimentální výzkum, dokud nejsou práva vyřešena.
+- [x] Odstranit Yahoo/yfinance z aktivního veřejného runtime po opakovaných HTTP 401 Invalid Crumb chybách z dodaného logu; public app používá synthetic demo nebo uživatelem importovaná OHLCV CSV.
+- [ ] Vybrat a integrovat licencovaný, spolehlivý cenový zdroj s právy pro veřejné použití a redistribuci; CSV import je současný bezpečný workaround, nikoli automatický live feed.
 
 **Brána fáze:** žádný chybějící nebo starý údaj nesmí být tiše prezentován jako ověřená aktuální data.
 
