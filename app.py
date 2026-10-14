@@ -1067,11 +1067,19 @@ with tab_strategy:
             st.download_button("Stáhnout SIC expozice CSV", exposure_summary.to_csv(index=False).encode("utf-8"), "industry_exposure_summary.csv", "text/csv")
         with st.expander("Audit každého rebalancování"):
             st.dataframe(audit, width="stretch", hide_index=True)
-        st.dataframe(curve, width="stretch")
+        # The strategy result stores a private end_state in DataFrame.attrs so
+        # continuous walk-forward folds can resume the same simulated account.
+        # Streamlit's Arrow serializer tries to serialize attrs too, including
+        # Timestamp values, so the presentation copies explicitly drop metadata.
+        curve_display = curve.copy(deep=True)
+        curve_display.attrs = {}
+        st.dataframe(curve_display, width="stretch")
         if "SIC group weights" in curve:
             st.markdown("#### Expozice podle současné SEC SIC skupiny")
             st.caption("Skupiny jsou součtem koncových váh pozic podle aktuálního SEC SIC metadata. Nejde o historickou point-in-time klasifikaci ani o standardizovanou GICS sektorovou klasifikaci.")
-            st.dataframe(curve[["SIC group weights", "Max SIC group weight %", "Distinct SIC groups"]], width="stretch")
+            sic_display = curve[["SIC group weights", "Max SIC group weight %", "Distinct SIC groups"]].copy()
+            sic_display.attrs = {}
+            st.dataframe(sic_display, width="stretch")
         st.download_button("Stáhnout equity curve CSV",curve.to_csv().encode("utf-8"),"backtest_curve.csv","text/csv")
         st.download_button("Stáhnout audit obchodních rozhodnutí CSV",audit.to_csv(index=False).encode("utf-8"),"backtest_audit.csv","text/csv")
         st.markdown("#### Citlivost na transakční náklady")
