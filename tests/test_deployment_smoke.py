@@ -70,5 +70,9 @@ def test_public_smoke_classifies_hosted_page_state(body, build_marker, expected_
     assert MODULE.classify_page_state(body, build_marker) == expected_state
 
 
-def test_public_smoke_does_not_wait_full_timeout_for_repeated_host_shell():
-    assert MODULE.HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS == 6
+@pytest.mark.parametrize(
+    ("attempts", "expected"),
+    [(0, False), (5, False), (6, True), (9, True)],
+)
+def test_public_smoke_host_shell_retry_limit_is_bounded(attempts, expected):
+    assert MODULE.host_shell_retry_exhausted(attempts) is expected
