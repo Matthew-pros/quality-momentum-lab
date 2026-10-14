@@ -26,8 +26,9 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Použít adjustované OHLC pro MA/ATR/breakout/denní stop, aby historické splitové úpravy nevytvářely falešné cenové skoky.
 - [ ] Porovnat konkrétní tickery s nezávislým cenovým zdrojem a ručně zkontrolovat vybrané XBRL metriky.
 - [ ] Doplnit automatickou kontrolu duplicit po transformaci, corporate actions a varování na příliš řídkou historii.
-- [x] Odstranit Yahoo/yfinance z aktivního veřejného runtime po opakovaných HTTP 401 Invalid Crumb chybách z dodaného logu; public app používá synthetic demo nebo uživatelem importovaná OHLCV CSV.
-- [ ] Vybrat a integrovat licencovaný, spolehlivý cenový zdroj s právy pro veřejné použití a redistribuci; CSV import je současný bezpečný workaround, nikoli automatický live feed.
+- [x] Odstranit Yahoo/yfinance z aktivního veřejného runtime po opakovaných HTTP 401 Invalid Crumb chybách z dodaného logu; default zůstává synthetic demo, reálná data jsou přes CSV nebo osobní Tiingo token.
+- [x] Přidat Tiingo EOD adapter pro vlastní token každého uživatele, s hlavičkou Authorization, session-local cache, retries, výslovným currency mappingem, připsáním zdroje a bez raw cenových exportů v Tiingo režimu.
+- [ ] Získat licenci pro jeden sdílený, automatický live feed zobrazovaný všem návštěvníkům; Tiingo user-token režim není redistribuční licence a CSV zůstává alternativou.
 
 **Brána fáze:** žádný chybějící nebo starý údaj nesmí být tiše prezentován jako ověřená aktuální data.
 
