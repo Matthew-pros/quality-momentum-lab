@@ -1776,3 +1776,46 @@ def test_tiingo_quote_currency_map_is_explicit_and_rejects_conflicts():
         parse_quote_currency_map("AAA=USD, AAA=EUR")
     with pytest.raises(ValueError, match="Invalid quote currency"):
         parse_quote_currency_map("AAA=US D")
+
+
+def test_held_position_review_prioritizes_technical_exits_and_never_sells_for_missing_data():
+    from qlab.portfolio_review import build_holdings_review
+
+    screener = pd.DataFrame([
+        {"Ticker":"AAA","Fundamental/composite score":82.0,"Fundamental coverage %":85.0,
+         "Trend OK":True,"Below 50d low":False,"Signal":"Breakout candidate"},
+        {"Ticker":"BBB","Fundamental/composite score":70.0,"Fundamental coverage %":90.0,
+         "Trend OK":True,"Below 50d low":True,"Signal":"Review exit"},
+        {"Ticker":"CCC","Fundamental/composite score":72.0,"Fundamental coverage %":75.0,
+         "Trend OK":False,"Below 50d low":False,"Signal":"Trend watch"},
+        {"Ticker":"DDD","Fundamental/composite score":75.0,"Fundamental coverage %":20.0,
+         "Trend OK":True,"Below 50d low":False,"Signal":"Trend watch"},
+        {"Ticker":"EEE","Fundamental/composite score":20.0,"Fundamental coverage %":80.0,
+         "Trend OK":True,"Below 50d low":False,"Signal":"Momentum watch"},
+    ])
+    queue = build_holdings_review(
+        screener, ["AAA","BBB","CCC","DDD","EEE","MISSING"],
+        exit_score_floor=35, min_fundamental_coverage=50, check_fundamentals=True,
+    ).set_index("Ticker")
+    assert queue.loc["AAA","Review action"] == "HOLD / no configured exit trigger"
+    assert queue.loc["BBB","Review action"] == "EXIT REVIEW — technical rule broken"
+    assert queue.loc["CCC","Review action"] == "EXIT REVIEW — technical rule broken"
+    assert queue.loc["DDD","Review action"] == "FUNDAMENTALS REVIEW — coverage incomplete"
+    assert queue.loc["EEE","Review action"] == "THESIS REVIEW — score below floor"
+    assert queue.loc["MISSING","Review action"] == "DATA REVIEW — holding missing"
+    assert "not in the current price universe" in queue.loc["MISSING","Reasons"]
+
+
+def test_held_position_review_does_not_require_fundamentals_in_demo_and_rejects_duplicates():
+    from qlab.portfolio_review import build_holdings_review
+
+    screener = pd.DataFrame([
+        {"Ticker":"SIM01","Technical score":80.0,"Trend OK":True,"Below 50d low":False,"Signal":"Trend watch"}
+    ])
+    queue = build_holdings_review(screener, ["sim01"], check_fundamentals=False)
+    assert queue.iloc[0]["Review action"] == "HOLD / no configured exit trigger"
+    with pytest.raises(ValueError, match="Held ticker list contains duplicates"):
+        build_holdings_review(screener, ["SIM01","sim01"])
+    duplicated = pd.concat([screener,screener],ignore_index=True)
+    with pytest.raises(ValueError, match="Screener contains duplicate tickers"):
+        build_holdings_review(duplicated, ["SIM01"])
