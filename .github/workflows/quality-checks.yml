@@ -6,6 +6,8 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "17 7 * * 1"
 
 permissions:
   contents: read
@@ -24,8 +26,8 @@ jobs:
         python-version: ["3.12", "3.14"]
     name: Python ${{ matrix.python-version }} / quality checks
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -40,7 +42,7 @@ jobs:
         run: python -m pytest -q --cov=qlab --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-python-${{ matrix.python-version }}
           path: coverage.xml
