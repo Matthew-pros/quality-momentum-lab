@@ -768,6 +768,15 @@ def test_synthetic_demo_prices_are_deterministic_and_explicitly_non_real():
     assert first_report["Quality"].eq("OK").all()
 
 
+def test_synthetic_demo_prices_do_not_change_when_universe_order_changes():
+    from qlab.data import generate_demo_market_data
+
+    first, _ = generate_demo_market_data(["SIM_A", "SIM_B", "SIM_C"], period="5y", now="2026-10-13")
+    reordered, _ = generate_demo_market_data(["SIM_C", "SIM_A", "SIM_B"], period="5y", now="2026-10-13")
+    for ticker in ["SIM_A", "SIM_B", "SIM_C"]:
+        pd.testing.assert_frame_equal(first[ticker], reordered[ticker])
+
+
 def test_market_quality_rejects_inconsistent_ohlc_ranges_and_negative_volume():
     from qlab.data import assess_price_quality
 
