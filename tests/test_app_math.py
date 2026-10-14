@@ -1493,3 +1493,63 @@ def test_sec_history_reloads_filing_deferred_on_exact_prior_decision_date():
     assert history.iloc[1]["Revenue"] == 150
     assert history.iloc[0]["Latest filing date"] == "2022-02-15"
     assert history.iloc[1]["Latest filing date"] == "2023-03-31"
+
+
+def test_csv_adapter_rejects_blank_or_nan_ticker_and_assessment_excludes_infinite_volume():
+    import io
+    from qlab.data import load_ohlcv_csv, assess_price_quality
+
+    bad_ticker = pd.DataFrame([{
+        "Date":"2026-01-02","Ticker":np.nan,"Open":10.0,"High":11.0,"Low":9.0,"Close":10.0
+    }]).to_csv(index=False).encode("utf-8")
+    with pytest.raises(ValueError, match="empty or missing Ticker"):
+        load_ohlcv_csv(io.BytesIO(bad_ticker), expected_tickers=["AAA"])
+
+    index = pd.to_datetime(["2026-10-01","2026-10-02","2026-10-05"])
+    frame = pd.DataFrame({
+        "Open":[10.0,10.1,10.2],
+        "High":[10.5,10.6,10.7],
+        "Low":[9.5,9.6,9.7],
+        "Close":[10.0,10.2,10.4],
+        "Adj Close":[10.0,10.2,10.4],
+        "Volume":[1000.0,np.inf,1100.0],
+    }, index=index)
+    clean, report = assess_price_quality({"AAA":frame}, now="2026-10-06")
+    assert pd.isna(clean["AAA"].loc[index[1],"Close"])
+    assert report.iloc[0]["Invalid price rows"] == 1
+    assert report.iloc[0]["Rows"] == 2
+
+
+def test_dcf_value_formula_and_sensitivity_have_expected_direction():
+    from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
+
+    result = calculate_fcfe_dcf(
+        base_fcf=100.0, annual_growth_rate=0.05, cost_of_equity=0.10,
+        terminal_growth_rate=0.02, years=5, shares_outstanding=10.0,
+    )
+    expected_forecast = sum(100.0 * (1.05 ** year) / (1.10 ** year) for year in range(1, 6))
+    terminal_value = 100.0 * (1.05 ** 5) * 1.02 / (0.10 - 0.02)
+    expected_value = expected_forecast + terminal_value / (1.10 ** 5)
+    assert result["Implied equity value"] == pytest.approx(expected_value)
+    assert result["Implied value per share"] == pytest.approx(expected_value / 10.0)
+
+    sensitivity = dcf_sensitivity(
+        base_fcf=100.0, shares_outstanding=10.0,
+        growth_rates=[0.02,0.05,0.08],
+        discount_rates=[0.08,0.10,0.12], terminal_growth_rate=0.02, years=5,
+    )
+    label_low_discount = "Cost of equity 8.0%"
+    label_high_discount = "Cost of equity 12.0%"
+    assert sensitivity.loc[1,label_low_discount] > sensitivity.loc[1,label_high_discount]
+    assert sensitivity.loc[0,label_low_discount] < sensitivity.loc[2,label_low_discount]
+
+
+def test_dcf_rejects_economically_invalid_terminal_discount_and_growth_inputs():
+    from qlab.valuation import calculate_fcfe_dcf
+
+    with pytest.raises(ValueError, match="greater than terminal growth"):
+        calculate_fcfe_dcf(100.0, 0.05, 0.02, 0.02)
+    with pytest.raises(ValueError, match="greater than -100%"):
+        calculate_fcfe_dcf(100.0, -1.0, 0.10, 0.02)
+    with pytest.raises(ValueError, match="Forecast horizon must be an integer"):
+        calculate_fcfe_dcf(100.0, 0.05, 0.10, 0.02, years=5.5)
