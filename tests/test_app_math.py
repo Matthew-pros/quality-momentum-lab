@@ -1688,3 +1688,91 @@ def test_position_sizing_rejects_duplicate_tickers_and_caps_above_100_percent():
 
     with pytest.raises(ValueError, match="Selected tickers contain duplicates"):
         calculate_position_sizes(one, ["AAA","aaa"], 10_000)
+
+
+def test_tiingo_adapter_uses_user_token_header_and_normalizes_adjusted_ohlc(monkeypatch):
+    from qlab.data import load_tiingo_market_data
+
+    calls = []
+    payload = [
+        {"date":"2026-10-12T00:00:00+00:00","open":100,"high":102,"low":99,"close":101,"volume":1000,
+         "adjOpen":50.0,"adjHigh":51.0,"adjLow":49.5,"adjClose":50.5,"adjVolume":2000,
+         "divCash":0.2,"splitFactor":1.0},
+        {"date":"2026-10-13T00:00:00+00:00","open":101,"high":103,"low":100,"close":102,"volume":1200,
+         "adjOpen":50.5,"adjHigh":51.5,"adjLow":50.0,"adjClose":51.0,"adjVolume":2400,
+         "divCash":0.0,"splitFactor":1.0},
+    ]
+
+    class Response:
+        status_code = 200
+        headers = {}
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return payload
+
+    def fake_get(url, headers, params, timeout):
+        calls.append({"url":url,"headers":headers,"params":params,"timeout":timeout})
+        return Response()
+
+    monkeypatch.setattr("qlab.data.requests.get", fake_get)
+    monkeypatch.setattr("qlab.data.time.sleep", lambda seconds: None)
+    prices, report = load_tiingo_market_data(["AAA"], "user-secret-token", "5y", now="2026-10-14")
+
+    assert set(prices) == {"AAA"}
+    frame = prices["AAA"]
+    assert frame.iloc[-1]["Close"] == 102
+    assert frame.iloc[-1]["Adj Close"] == 51
+    assert frame.iloc[-1]["Adj Low"] == 50
+    assert frame.attrs["currency"] == "UNKNOWN"
+    assert calls[0]["headers"]["Authorization"] == "Token user-secret-token"
+    assert "user-secret-token" not in calls[0]["url"]
+    assert "user-secret-token" not in str(calls[0]["params"])
+    assert calls[0]["params"]["startDate"] == "2021-10-14"
+    assert report.iloc[0]["Source"] == "Tiingo EOD (user token)"
+    assert report.iloc[0]["Currency"] == "UNKNOWN"
+
+
+def test_tiingo_stops_after_auth_failure_and_does_not_retry_permanent_4xx(monkeypatch):
+    import requests
+    from qlab.data import load_tiingo_market_data
+
+    calls = []
+    class UnauthorizedResponse:
+        status_code = 401
+        headers = {}
+        def raise_for_status(self):
+            raise requests.HTTPError("unauthorized", response=self)
+        def json(self):
+            return {"detail":"unauthorized"}
+
+    def fake_get(url, headers, params, timeout):
+        calls.append(url)
+        return UnauthorizedResponse()
+
+    monkeypatch.setattr("qlab.data.requests.get", fake_get)
+    monkeypatch.setattr("qlab.data.time.sleep", lambda seconds: None)
+    prices, report = load_tiingo_market_data(["AAA","BBB","CCC"], "bad-token", "5y", now="2026-10-14")
+    assert prices == {}
+    assert len(calls) == 1
+    assert len(report) == 3
+    assert report["Status"].eq("MISSING").all()
+    assert report.iloc[1]["Message"] == "Not requested because Tiingo authentication failed."
+
+
+def test_tiingo_quote_currency_map_is_explicit_and_rejects_conflicts():
+    from qlab.data import apply_quote_currency_map, parse_quote_currency_map
+
+    mapping = parse_quote_currency_map("aapl=usd; SAP:eur, NESN=CHF")
+    assert mapping == {"AAPL":"USD","SAP":"EUR","NESN":"CHF"}
+    prices = {"AAPL":pd.DataFrame({"Close":[100.0]}), "SAP":pd.DataFrame({"Close":[50.0]})}
+    report = pd.DataFrame([{"Ticker":"AAPL","Currency":"UNKNOWN"},{"Ticker":"SAP","Currency":"UNKNOWN"}])
+    updated, updated_report = apply_quote_currency_map(prices,report,mapping)
+    assert updated["AAPL"].attrs["currency"] == "USD"
+    assert updated["SAP"].attrs["currency"] == "EUR"
+    assert updated_report.set_index("Ticker").loc["SAP","Currency"] == "EUR"
+    assert parse_quote_currency_map("AAA=USD") == {"AAA":"USD"}
+    with pytest.raises(ValueError, match="multiple quote currencies"):
+        parse_quote_currency_map("AAA=USD, AAA=EUR")
+    with pytest.raises(ValueError, match="Invalid quote currency"):
+        parse_quote_currency_map("AAA=US D")
