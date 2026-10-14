@@ -15,6 +15,9 @@ from urllib.parse import urlparse
 
 EXPECTED_MARKER = "QUALITY MOMENTUM LAB"
 EXPECTED_SCREENER_HEADING = "Screener a podkladové metriky"
+# Do not spend the full six-minute deployment timeout when the host repeatedly
+# serves its generic shell but never executes the app script.
+HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS = 6
 
 
 def validate_app_url(value: str) -> str:
@@ -40,6 +43,28 @@ def expected_build_marker() -> str:
         if match:
             return f"build {match.group(1)}"
     raise RuntimeError("Could not determine APP_VERSION from the checked-out app.py.")
+
+
+def host_shell_retry_exhausted(consecutive_attempts: int) -> bool:
+    """Return whether repeated generic host-shell responses should fail the smoke check."""
+    return consecutive_attempts >= HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS
+
+
+def classify_page_state(body: str, build_marker: str) -> str:
+    """Classify visible app text so a generic HTTP-200 shell is not mistaken for a healthy app."""
+    normalized = " ".join(str(body or "").split())
+    upper = normalized.upper()
+    if not normalized:
+        return "empty"
+    if "THIS APP HAS ENCOUNTERED AN ERROR" in upper:
+        return "application_error"
+    if EXPECTED_MARKER in upper and build_marker.lower() in normalized.lower():
+        return "current_build"
+    if EXPECTED_MARKER in upper:
+        return "stale_build"
+    if "HOSTED WITH STREAMLIT" in upper and "CREATED BY" in upper:
+        return "host_shell_only"
+    return "unknown"
 
 
 def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_000) -> None:
@@ -75,6 +100,7 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
             deadline = time.monotonic() + timeout_ms / 1000
             attempts = 0
             rendered_current_build = False
+            consecutive_host_shell_only = 0
             # Streamlit Community Cloud can take time to rebuild after a Git push.
             # A single-page wait would stay on an old build forever even after the host
             # becomes current, so actively reload and poll until the expected version appears.
@@ -101,18 +127,27 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
                             last_body_text = page.locator("body").inner_text(timeout=min(10_000, remaining_ms))
                         except Exception as body_exc:
                             last_body_text = f"<body text unavailable: {type(body_exc).__name__}: {body_exc}>"
-                        is_current = (
-                            EXPECTED_MARKER in last_body_text.upper()
-                            and build_marker.lower() in last_body_text.lower()
-                        )
+                        state = classify_page_state(last_body_text, build_marker)
                         visible_error = page.get_by_text("This app has encountered an error", exact=False)
                         if visible_error.count() > 0 and visible_error.first.is_visible():
                             # Let a later retry recover from a rebuild transition, but keep
                             # the visible error in the final diagnostics if it persists.
                             last_body_text = "STREAMLIT APPLICATION ERROR\n" + last_body_text
-                        elif is_current:
+                            consecutive_host_shell_only = 0
+                        elif state == "current_build":
                             rendered_current_build = True
                             break
+                        elif state == "host_shell_only":
+                            consecutive_host_shell_only += 1
+                            if host_shell_retry_exhausted(consecutive_host_shell_only):
+                                raise RuntimeError(
+                                    f"Public host returned HTTP {response_status} but served only the generic "
+                                    f"Streamlit shell for {consecutive_host_shell_only} consecutive reload attempts. "
+                                    "The app content did not render; inspect Streamlit Community Cloud build/runtime "
+                                    "logs and restart or redeploy the app. HTTP 200 alone is not a healthy deployment."
+                                )
+                        else:
+                            consecutive_host_shell_only = 0
                 except PlaywrightTimeoutError as nav_exc:
                     diagnostics["failed_requests"].append(f"navigation attempt {attempts}: {nav_exc}")
                 if time.monotonic() >= deadline:
