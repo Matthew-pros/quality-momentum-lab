@@ -32,3 +32,15 @@ def test_deployment_smoke_accepts_public_streamlit_https_url():
 def test_deployment_smoke_rejects_unsafe_or_malformed_urls(url):
     with pytest.raises(ValueError):
         MODULE.validate_app_url(url)
+
+
+def test_public_smoke_expected_build_matches_app_version():
+    app_path = Path(__file__).resolve().parents[1] / "app.py"
+    app_source = app_path.read_text(encoding="utf-8")
+    version_line = next(
+        (line.strip() for line in app_source.splitlines() if line.strip().startswith("APP_VERSION = ")),
+        None,
+    )
+    assert version_line is not None
+    version = version_line.split("=", 1)[1].strip().strip('"').strip("'")
+    assert MODULE.EXPECTED_BUILD_MARKER == f"build {version}"
