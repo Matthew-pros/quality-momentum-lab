@@ -1299,6 +1299,8 @@ with tab_portfolio:
             c.metric("Otevřené loty",str(len(open_lots)))
             if len(realized_currencies) > 1:
                 st.caption("P/L se nesčítá napříč různými měnami bez konverze do společné měny.")
+            if "UNKNOWN" in realized_currencies:
+                st.warning("U alespoň jedné transakce chybí měna. Aplikace ji ponechává jako UNKNOWN — nepředpokládá automaticky USD a nesmí se podle tohoto souboru rozhodovat o CZK daňovém osvobození.")
             if not realized.empty:
                 st.markdown("**Realizované páry (FIFO)**")
                 st.dataframe(realized,width="stretch",hide_index=True)
