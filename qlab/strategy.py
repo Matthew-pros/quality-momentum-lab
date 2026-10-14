@@ -1467,12 +1467,14 @@ def _apply_terminal_liquidation_cost(
     if exposure <= 0 or cost_bps <= 0:
         out.loc[out.index[-1], "Terminal liquidation turnover"] = 0.0
         out.loc[out.index[-1], "Terminal liquidation cost"] = 0.0
+        out.loc[out.index[-1], "Terminal liquidation cost value"] = 0.0
         return out
     end_equity = float(out.iloc[-1]["Equity"])
     before_equity = float(initial) if len(out) == 1 else float(out.iloc[-2]["Equity"])
     if end_equity <= 0 or before_equity <= 0:
         out.loc[out.index[-1], "Terminal liquidation turnover"] = exposure
         out.loc[out.index[-1], "Terminal liquidation cost"] = 0.0
+        out.loc[out.index[-1], "Terminal liquidation cost value"] = 0.0
         return out
     liquidation_turnover = exposure * end_equity / before_equity
     cash_cost = end_equity * exposure * float(cost_bps) / 10_000
@@ -1483,6 +1485,8 @@ def _apply_terminal_liquidation_cost(
     out.loc[last, "Net return"] = final_equity / before_equity - 1
     if "Transaction cost" in out:
         out.loc[last, "Transaction cost"] = float(out.loc[last, "Transaction cost"]) + extra_return_cost
+    if "Transaction cost value" in out:
+        out.loc[last, "Transaction cost value"] = float(out.loc[last, "Transaction cost value"]) + cash_cost
     if "Gross turnover" in out:
         out.loc[last, "Gross turnover"] = float(out.loc[last, "Gross turnover"]) + liquidation_turnover
     if "Estimated cost (bps of portfolio)" in out:
@@ -1491,6 +1495,7 @@ def _apply_terminal_liquidation_cost(
         )
     out.loc[last, "Terminal liquidation turnover"] = liquidation_turnover
     out.loc[last, "Terminal liquidation cost"] = extra_return_cost
+    out.loc[last, "Terminal liquidation cost value"] = cash_cost
     return out
 
 
@@ -1794,7 +1799,8 @@ def expanding_walk_forward(
         "OOS max drawdown": float(np.min(oos_drawdown)),
         "OOS final equity": float(oos["Equity"].iloc[-1]),
         "OOS average turnover %": float(pd.to_numeric(oos["Gross turnover"], errors="coerce").mean() * 100),
-        "Terminal liquidation cost % of starting equity sum": float(pd.to_numeric(oos.get("Terminal liquidation cost", pd.Series(0, index=oos.index)), errors="coerce").fillna(0).sum() * 100),
+        "Terminal liquidation cost USD": float(pd.to_numeric(oos.get("Terminal liquidation cost value", pd.Series(0, index=oos.index)), errors="coerce").fillna(0).sum()),
+        "Terminal liquidation cost % of initial NAV": float(pd.to_numeric(oos.get("Terminal liquidation cost value", pd.Series(0, index=oos.index)), errors="coerce").fillna(0).sum() / base_initial * 100),
         "Portfolio continuity": "Continuous account" if continuous_portfolio else "Flat-start episodes",
     }
     bench_good = benchmark_series.dropna()
