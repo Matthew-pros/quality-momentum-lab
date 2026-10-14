@@ -1819,3 +1819,14 @@ def test_held_position_review_does_not_require_fundamentals_in_demo_and_rejects_
     duplicated = pd.concat([screener,screener],ignore_index=True)
     with pytest.raises(ValueError, match="Screener contains duplicate tickers"):
         build_holdings_review(duplicated, ["SIM01"])
+
+
+def test_held_position_review_distinguishes_missing_metrics_from_low_score():
+    from qlab.portfolio_review import build_holdings_review
+
+    screener = pd.DataFrame([
+        {"Ticker":"AAA","Technical score":np.nan,"Trend OK":True,"Below 50d low":False,"Signal":np.nan}
+    ])
+    queue = build_holdings_review(screener,["AAA"],check_fundamentals=False)
+    assert queue.iloc[0]["Review action"] == "DATA REVIEW — metrics missing"
+    assert "scores are missing" in queue.iloc[0]["Reasons"]
