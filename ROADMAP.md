@@ -11,7 +11,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Počítat průraz z předchozích 20/55 denních high a ATR(20) z true range.
 - [x] Zachovat chybějící faktory jako chybějící; nevyplňovat je fiktivním neutrálním skóre 50.
 - [x] Přidat regresní testy indikátorů, časování, look-ahead, SEC as-of date, vah a FIFO.
-- [x] Přidat GitHub Actions test workflow.
+- [x] Přidat GitHub Actions test workflow s matice runtime Python 3.12 / 3.14 včetně offline Streamlit UI smoke testu.
 - [ ] Ověřit aktuální živou verzi na Streamlit Community Cloud a zkontrolovat log po posledních změnách.
 
 ## Fáze 1 — Data a provenance
@@ -21,7 +21,8 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Stahovat ceny v jedné neparalelní dávce, normalizovat různé tvary sloupců a při částečném selhání opakovat chybějící tickery sekvenčně.
 - [x] Vykazovat první/poslední datum cenové řady, počet řádků, chybějící řady a exportovat kontrolní CSV.
 - [x] Přidat oficiální SEC EDGAR Company Facts adaptér s identifikačním User-Agent, SIC kódem/popisem a opakováním při přechodných HTTP chybách.
-- [x] Detekovat zastaralé řady, neplatné OHLC, extrémní denní pohyby a zobrazovat stav `OK/REVIEW` v datovém panelu; neplatné cenové řádky se z výpočtů vyřazují.
+- [x] Detekovat zastaralé řady, neplatné OHLC, extrémní denní pohyby a zobrazovat stav `OK/REVIEW` v datovém panelu; neplatné cenové řádky a nekonečné objemy se z výpočtů vyřazují.
+- [x] Odmítat prázdné identifikátory tickerů a konfliktní měny; testovat chování na Pandas 2.x / 3.x.
 - [x] Použít adjustované OHLC pro MA/ATR/breakout/denní stop, aby historické splitové úpravy nevytvářely falešné cenové skoky.
 - [ ] Porovnat konkrétní tickery s nezávislým cenovým zdrojem a ručně zkontrolovat vybrané XBRL metriky.
 - [ ] Doplnit automatickou kontrolu duplicit po transformaci, corporate actions a varování na příliš řídkou historii.
@@ -32,10 +33,11 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 ## Fáze 2 — Fundamenty a časová správnost
 
-- [x] Zavést SEC snapshoty filtrované podle data zveřejnění a konzervativně odložit fakta zveřejněná v den uzavíracího signálu až na další rozhodovací den.
+- [x] Zavést SEC snapshoty filtrované podle data zveřejnění a konzervativně odložit fakta zveřejněná v den uzavíracího signálu až na další rozhodovací den; další měsíc neztratí výkaz, který byl odložen právě kvůli shodnému datu.
+- [x] Skládat roční historii přes alternativní XBRL tagy, pokud se tag pro stejný ukazatel mění v čase, při zachování jednotek, období a filing-date filtru.
 - [x] Vypočítat roční růst tržeb/zisku, ROE proxy, marži, FCF a FCF marži z dostupných standardizovaných výkazů.
 - [x] Vykazovat fundamentální pokrytí a stav SEC dat; chybějící metriky zůstávají prázdné.
-- [x] Přidat samostatný FCFE-style DCF scénář s editovatelnými předpoklady a citlivostní tabulkou, oddělený od Composite score a obchodního backtestu.
+- [x] Přidat samostatný FCFE-style DCF scénář s editovatelnými předpoklady a citlivostní tabulkou, oddělený od Composite score a obchodního backtestu, včetně regresních testů výpočtu a směru citlivosti.
 - [ ] Doložit měnové/jednotkové mapování FCF, počet akcií a quote price pro emitenta/ADR/dual-class před použitím DCF výsledku.
 - [x] Přidat časované CSV vstupy pro sentiment a analytické revize; historie používá poslední záznam známý k rozhodovacímu datu.
 - [ ] Ověřit SEC tagy, jednotky, fiskální roky, opravy výkazů, ADR a duální třídy pro reprezentativní vzorek.
@@ -74,6 +76,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat předběžné daňové kontrolní štítky pro české osvobození: roční hodnotový test do 100 000 Kč; 40milionový strop časového testu pouze pro rok 2025; odstranění tohoto stropu pro cenné papíry od roku 2026; kontrola potenciální oznamovací hranice 5 mil. Kč po zdrojovém prodejním řádku.
 - [x] FIFO odmítá párování nákupního lotu a prodeje v různých měnách bez FX konverze a souhrnná KPI nesčítají P/L v různých měnách.
 - [x] FIFO odmítá NaN/nekonečné hodnoty a chybějící měnu nikdy tiše nepřekládá na USD; neznámou měnu zachovává jako UNKNOWN a blokuje z ní závěry o CZK osvobození.
+- [x] Date-only FIFO `as_of` cut-off zahrnuje celou koncovou kalendářní dobu včetně transakcí s časem později v ten den.
 - [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje a ostatní osvobozené příjmy za rok včetně kryptoaktiv (zejména pro rok 2025), corporate actions, dědictví a výjimky (např. obchodní majetek); současný modul je pouze orientační a není finálním výpočtem daně.
 - [x] Přidat omezení počtu pozic podle současné hrubé SEC SIC skupiny, report skupinové expozice, počty vstupů/výstupů, průměrnou dobu držení a nákladové komponenty.
 - [x] Přidat portfolio-level souhrnný risk budget do ATR sizing kalkulátoru a škálovat celé kusy pod cap.
@@ -87,6 +90,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
+- [x] Ověřit současnou sadu regresních testů v Pythonu 3.12 i 3.14; poslední ověřený kódový běh zahrnoval 86 testů.
 - [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
 - [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
