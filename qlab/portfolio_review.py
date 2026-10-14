@@ -68,9 +68,10 @@ def build_holdings_review(
     priority = {
         "EXIT REVIEW — technical rule broken":0,
         "DATA REVIEW — holding missing":1,
-        "FUNDAMENTALS REVIEW — coverage incomplete":2,
-        "THESIS REVIEW — score below floor":3,
-        "HOLD / no configured exit trigger":4,
+        "DATA REVIEW — metrics missing":2,
+        "FUNDAMENTALS REVIEW — coverage incomplete":3,
+        "THESIS REVIEW — score below floor":4,
+        "HOLD / no configured exit trigger":5,
     }
     for ticker in held:
         if ticker not in lookup.index:
@@ -105,7 +106,8 @@ def build_holdings_review(
 
         trend = _as_bool(row.get("Trend OK")) if "Trend OK" in row else None
         below_low = _as_bool(row.get("Below 50d low")) if "Below 50d low" in row else None
-        signal = str(row.get("Signal", "") or "")
+        signal_value = row.get("Signal", "")
+        signal = "" if pd.isna(signal_value) else str(signal_value)
         reasons = []
 
         if below_low is True:
@@ -118,6 +120,8 @@ def build_holdings_review(
             reasons.append("Trend status is missing; verify price history/indicators before deciding")
         if below_low is None:
             reasons.append("50-session-low status is missing; verify price history/indicators before deciding")
+        if pd.isna(score):
+            reasons.append("Composite and technical scores are missing; verify source and factor coverage before deciding")
         if check_fundamentals and (pd.isna(coverage) or coverage < float(min_fundamental_coverage)):
             reasons.append(
                 f"Fundamental coverage is incomplete ({'missing' if pd.isna(coverage) else f'{coverage:.0f}'}%; "
@@ -128,6 +132,8 @@ def build_holdings_review(
             action = "EXIT REVIEW — technical rule broken"
         elif trend is None or below_low is None:
             action = "DATA REVIEW — holding missing"
+        elif pd.isna(score):
+            action = "DATA REVIEW — metrics missing"
         elif check_fundamentals and (pd.isna(coverage) or coverage < float(min_fundamental_coverage)):
             action = "FUNDAMENTALS REVIEW — coverage incomplete"
         elif pd.isna(score) or score <= float(exit_score_floor):
