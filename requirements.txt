@@ -1,4 +1,4 @@
-streamlit>=1.45,<2
+streamlit>=1.54,<2  # st.button/download_button width='stretch' needs the newer width API
 pandas>=2.2,<4
 numpy>=1.26,<3
 plotly>=5.20,<7
