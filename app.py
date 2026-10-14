@@ -121,7 +121,7 @@ def _equity_chart(close, ma50=None, ma200=None, title="Cenový vývoj"):
     fig.update_layout(title=title, template="plotly_dark", height=380, margin=dict(l=12,r=12,t=48,b=12),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", xaxis_title=None,
-        yaxis_title="Cena v měně kotace", hovermode="x unified")
+        yaxis_title="Adjustovaná cena pro signály (vč. dividendových úprav)", hovermode="x unified")
     return fig
 
 def safe_float(value, default=0.0):
