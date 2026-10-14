@@ -687,6 +687,10 @@ def run_monthly_backtest(
     precomputed_indicators: dict[str, pd.DataFrame] | None = None,
     precomputed_cross_sections: dict[pd.Timestamp, pd.DataFrame] | None = None,
     universe_history: pd.DataFrame | None = None,
+    initial_holdings: set[str] | list[str] | None = None,
+    initial_weights: dict[str, float] | None = None,
+    initial_stop_high_water: dict[str, float] | None = None,
+    initial_holding_entry_dates: dict[str, pd.Timestamp] | None = None,
 ) -> tuple[pd.DataFrame | None, dict | None, pd.DataFrame | None]:
     """Month-end signals; selected positions earn the next month return.
 
@@ -764,13 +768,49 @@ def run_monthly_backtest(
     if start_cutoff is not None and end_cutoff is not None and start_cutoff > end_cutoff:
         raise ValueError("evaluation_start_date must be on or before evaluation_end_date.")
 
+    if not np.isfinite(float(initial)) or float(initial) <= 0:
+        raise ValueError("Initial equity must be a positive finite value.")
+    previous_holdings = {str(t).strip().upper() for t in (initial_holdings or set()) if str(t).strip()}
+    if len(previous_holdings) != len(initial_holdings or set()):
+        raise ValueError("Initial holdings contain duplicate/blank tickers.")
+    unknown_initial = sorted(previous_holdings - set(adjusted))
+    if unknown_initial:
+        raise ValueError("Initial holdings are missing price histories: " + ", ".join(unknown_initial[:10]))
+    previous_weights = {str(t).strip().upper(): float(w) for t, w in (initial_weights or {}).items()}
+    if set(previous_weights) != previous_holdings:
+        if previous_holdings and not previous_weights:
+            previous_weights = {ticker: 1.0 / len(previous_holdings) for ticker in previous_holdings}
+        elif not previous_holdings and previous_weights:
+            raise ValueError("Initial weights were supplied without initial holdings.")
+        elif set(previous_weights) != previous_holdings:
+            raise ValueError("Initial holdings and initial weight tickers must match exactly.")
+    if any(not np.isfinite(w) or w < 0 for w in previous_weights.values()):
+        raise ValueError("Initial portfolio weights must be finite and non-negative.")
+    if sum(previous_weights.values()) > 1.0 + 1e-8:
+        raise ValueError("Initial portfolio weights cannot exceed 100% of NAV; residual cash is allowed.")
+    initial_high_water = {str(t).strip().upper(): float(v) for t, v in (initial_stop_high_water or {}).items()}
+    if set(initial_high_water) - previous_holdings:
+        raise ValueError("Initial trailing-stop high-water marks must belong to current holdings.")
+    if any(not np.isfinite(v) or v <= 0 for v in initial_high_water.values()):
+        raise ValueError("Initial trailing-stop high-water marks must be positive finite prices.")
+    initial_entries = {}
+    for ticker, value in (initial_holding_entry_dates or {}).items():
+        name = str(ticker).strip().upper()
+        stamp = pd.Timestamp(value)
+        if stamp.tzinfo is not None:
+            stamp = stamp.tz_localize(None)
+        initial_entries[name] = stamp
+    if set(initial_entries) - previous_holdings:
+        raise ValueError("Initial holding-entry dates must belong to current holdings.")
+    if previous_holdings and not initial_entries:
+        initial_entries = {ticker: pd.Timestamp(monthly.index[start_idx]) for ticker in previous_holdings}
+    if set(initial_entries) != previous_holdings:
+        raise ValueError("Initial holding-entry dates must match initial holdings.")
     rows, audit = [], []
     equity = float(initial)
-    previous_holdings: set[str] = set()
-    previous_weights: dict[str, float] = {}
     # Persist the post-close high-water mark across rebalance months for existing positions.
-    stop_high_water: dict[str, float] = {}
-    holding_entry_dates: dict[str, pd.Timestamp] = {}
+    stop_high_water: dict[str, float] = initial_high_water.copy()
+    holding_entry_dates: dict[str, pd.Timestamp] = initial_entries.copy()
     closed_holding_days: list[int] = []
     total_entry_events = 0
     total_exit_events = 0
@@ -1019,6 +1059,13 @@ def run_monthly_backtest(
             metrics["Strategy CAGR aligned"] = float((1 + aligned["Strategy"]).prod() ** (12 / len(aligned)) - 1)
             curve["Benchmark return"] = bench.reindex(curve.index)
             curve["Benchmark equity"] = float(initial) * (1 + bench.reindex(curve.index).fillna(0)).cumprod()
+    curve.attrs["end_state"] = {
+        "holdings": sorted(previous_holdings),
+        "weights": dict(previous_weights),
+        "stop_high_water": dict(stop_high_water),
+        "holding_entry_dates": dict(holding_entry_dates),
+        "equity": float(equity),
+    }
     return curve, metrics, pd.DataFrame(audit)
 
 
