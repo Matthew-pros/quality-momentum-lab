@@ -34,13 +34,22 @@ def test_deployment_smoke_rejects_unsafe_or_malformed_urls(url):
         MODULE.validate_app_url(url)
 
 
-def test_public_smoke_expected_build_matches_app_version():
-    app_path = Path(__file__).resolve().parents[1] / "app.py"
-    app_source = app_path.read_text(encoding="utf-8")
+def test_public_smoke_expected_build_matches_app_version(monkeypatch):
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(repo_root)
+    app_source = (repo_root / "app.py").read_text(encoding="utf-8")
     version_line = next(
         (line.strip() for line in app_source.splitlines() if line.strip().startswith("APP_VERSION = ")),
         None,
     )
     assert version_line is not None
     version = version_line.split("=", 1)[1].strip().strip('"').strip("'")
-    assert MODULE.EXPECTED_BUILD_MARKER == f"build {version}"
+    assert MODULE.expected_build_marker() == f"build {version}"
+
+
+def test_public_smoke_marker_polling_script_has_bounded_timeout():
+    import inspect
+
+    signature = inspect.signature(MODULE.run_smoke)
+    assert signature.parameters["timeout_ms"].default >= 180_000
+    assert signature.parameters["poll_interval_ms"].default >= 1_000
