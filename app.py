@@ -50,11 +50,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def cached_tiingo_market_data(symbols: tuple[str, ...], token: str, period: str):
-    # The token is used only as a cache-key input and request header; never printed
-    # or written to repository/secrets. Users should clear cached data after use.
-    return load_tiingo_market_data(list(symbols), token, period)
+def session_tiingo_market_data(symbols: tuple[str, ...], token: str, period: str):
+    # Keep any data cache in this user's Streamlit session only; never place tokens
+    # in global/shared st.cache_data or logs. Store only a one-way token fingerprint.
+    fingerprint = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    cache = st.session_state.get("_tiingo_eod_session_cache")
+    if (
+        cache is not None
+        and cache.get("token_fingerprint") == fingerprint
+        and cache.get("symbols") == symbols
+        and cache.get("period") == period
+    ):
+        return cache["data"]
+    data = load_tiingo_market_data(list(symbols), token, period)
+    st.session_state["_tiingo_eod_session_cache"] = {
+        "token_fingerprint": fingerprint,
+        "symbols": symbols,
+        "period": period,
+        "data": data,
+    }
+    return data
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def cached_sec_map(email: str):
@@ -308,6 +323,7 @@ with st.sidebar:
     if st.button("Obnovit všechna data", type="primary", width="stretch"):
         st.cache_data.clear()
         st.session_state.pop("backtest_result", None)
+        st.session_state.pop("_tiingo_eod_session_cache", None)
         st.rerun()
 
 universe = (
@@ -354,7 +370,7 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
             if not tiingo_token.strip():
                 st.error("Vlož svůj vlastní Tiingo API token. Token se do repozitáře ani veřejných secrets neukládá.")
                 st.stop()
-            price_data_all, price_report = cached_tiingo_market_data(symbols, tiingo_token.strip(), period)
+            price_data_all, price_report = session_tiingo_market_data(symbols, tiingo_token.strip(), period)
         elif price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
             if price_csv_upload is None:
                 st.info("Vybraný je CSV režim. Nahraj historii OHLCV v levém panelu a případně uprav investiční univerzum tak, aby odpovídalo tickerům v souboru.")
@@ -1375,16 +1391,24 @@ with tab_data:
     })
     st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
     combined = _download_frame(price_data_all)
-    if not combined.empty:
-        st.download_button("Stáhnout adjustované cenové řady CSV (wide)",combined.to_csv(index_label="Date").encode("utf-8"),"adjusted_price_history_wide.csv","text/csv")
     long_ohlcv = _download_ohlcv_long(price_data_all)
-    if not long_ohlcv.empty:
-        st.download_button(
-            "Stáhnout OHLCV CSV pro opětovný import (long format)",
-            long_ohlcv.to_csv(index=False).encode("utf-8"),
-            "ohlcv_history_long.csv", "text/csv",
-            help="Formát kompatibilní s CSV importem této aplikace. V demo režimu obsahuje výhradně syntetické ceny.",
+    if price_provider.startswith("Tiingo"):
+        st.info(
+            "Tiingo ceny načítáš vlastním tokenem. Export raw/adjustované cenové historie je v této veřejné aplikaci vypnutý, "
+            "aby výchozí workflow data hromadně nepřerozděloval. Respektuj osobní/komerční podmínky svého účtu; "
+            "vývojářský režim vyžaduje vlastní token uživatele a jasné uvedení zdroje."
         )
+        st.caption("Data sourced by Tiingo · [EOD API documentation](https://www.tiingo.com/documentation/end-of-day) · [Developer Program](https://www.tiingo.com/documentation/appendix/developers)")
+    else:
+        if not combined.empty:
+            st.download_button("Stáhnout adjustované cenové řady CSV (wide)",combined.to_csv(index_label="Date").encode("utf-8"),"adjusted_price_history_wide.csv","text/csv")
+        if not long_ohlcv.empty:
+            st.download_button(
+                "Stáhnout OHLCV CSV pro opětovný import (long format)",
+                long_ohlcv.to_csv(index=False).encode("utf-8"),
+                "ohlcv_history_long.csv", "text/csv",
+                help="Formát kompatibilní s CSV importem této aplikace. V demo režimu obsahuje výhradně syntetické ceny.",
+            )
     if universe_history is not None:
         membership_asof = max(pd.Timestamp(frame.index.max()) for frame in prices.values() if not frame.empty)
         if membership_asof.tzinfo is not None:
