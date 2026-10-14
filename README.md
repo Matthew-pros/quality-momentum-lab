@@ -4,7 +4,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 
 ## What the app implements
 
-- **Public-safe price mode:** the default public app uses deterministic synthetic DEMO prices, never calls a market-data API at startup, labels every synthetic series, and skips real-company SEC fundamentals. For actual securities, switch to **Import OHLCV CSV** and upload a data set you have permission to use and publicly display. The Yahoo adapter is optional/non-public and is not part of the default public runtime.
+- **Public-safe price mode:** the default public app uses deterministic synthetic DEMO prices, never calls a market-data API at startup, labels every synthetic series, and skips real-company SEC fundamentals. For actual securities, switch to **Import OHLCV CSV** and upload a data set you have permission to use and publicly display. The old Yahoo/yfinance fetching path was removed after the supplied runtime log showed repeated HTTP 401 Invalid Crumb errors; no Yahoo adapter is currently bundled.
 - **Point-in-time universe membership:** optional interval CSV (`Ticker,Start date,End date`) restricts each historical cross-section before factor percentile ranks are calculated. The current screener is filtered to members as of the latest available price date. The app fails fast if a member in the history has no OHLCV series at all and exports the membership provenance. This reduces survivorship bias only if the uploaded intervals and delisted-price history are complete.
 - **Price quality/provenance:** per-ticker flags for stale series, invalid prices and extreme daily moves; invalid OHLC rows are excluded from technical calculations while large moves remain flagged for manual review. CSV exports retain source mode, uploaded filename, adjusted-close status and currency metadata. Portfolio-value calculations require a common USD price basis; the app does not invent FX rates or convert currencies.
 - **Technical factors:** momentum 12–1M and 6–1M, MA50/MA200 trend, MA200 slope, ADX(14), ATR(20), 20-/55-session breakout and 50-session low trigger. Indicators and daily stop logic use adjusted OHLC where available to avoid split-driven false jumps; latest ATR is converted to the quoted-price scale for share sizing.
@@ -26,7 +26,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 
 ## Important limits (not a claim of production-grade investment performance)
 
-1. **Public-data rights:** the deployed/public UI does not fetch or redistribute Yahoo prices. Its default is clearly labeled synthetic data; real prices are user-supplied through CSV. The optional Yahoo adapter is intended only for explicitly configured, non-public experimentation and requires checking the provider's terms and data rights. SEC facts are disabled in synthetic-demo mode.
+1. **Public-data rights:** the deployed/public UI does not fetch or redistribute Yahoo prices. Its default is clearly labeled synthetic data; real prices are user-supplied through CSV. No live-price vendor is bundled; a licensed, reliable provider remains a release gate. SEC facts are disabled in synthetic-demo mode.
 2. **SEC coverage:** SEC Company Facts only covers mapped SEC filers and available XBRL tags. Accounting definitions and fiscal periods differ; reported values need data-quality and issuer-by-issuer review.
 3. **Valuation estimates:** P/E and FCF yield based on current price × the latest reported shares outstanding can be materially wrong for ADRs, dual-class companies or stale share counts. These estimates are excluded from scoring by default.
 4. **Backtest universe:** static-list mode uses a user-selected ticker list and has survivorship bias. Optional interval membership improves point-in-time inclusion only if it completely covers every historical constituent and the OHLCV upload includes their price histories, including delisted stocks. This is not a packaged survivorship-bias-free security master. The engine stops instead of silently dropping held securities with missing future returns.
@@ -68,7 +68,7 @@ The contact email is sent in the SEC request's User-Agent header. To set it on S
 
 ## OHLCV price CSV schema
 
-When Yahoo Finance is unavailable or unsuitable for a public deployment, choose **Import OHLCV CSV** in the app. Upload one long-format CSV with one row per date and ticker:
+Choose **Import OHLCV CSV** in the app to work with real securities. Upload one long-format CSV with one row per date and ticker:
 
 ```csv
 Date,Ticker,Open,High,Low,Close,Adj Close,Volume
