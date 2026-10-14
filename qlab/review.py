@@ -15,6 +15,14 @@ def _first_existing(frame: pd.DataFrame, candidates: tuple[str, ...]) -> str | N
     return next((column for column in candidates if column in frame.columns), None)
 
 
+def _finite_number(value) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+    return number if np.isfinite(number) else np.nan
+
+
 def _bool_series(series: pd.Series) -> pd.Series:
     def parse(value) -> bool:
         if pd.isna(value):
@@ -55,8 +63,8 @@ def compare_screener_snapshots(
     momentum_change is an absolute return change (0.10 = 10 percentage points).
     """
     for name, value in [("score_change_points", score_change_points), ("momentum_change", momentum_change)]:
-        if not np.isfinite(float(value)) or float(value) < 0:
-            raise ValueError(f"{name} must be finite and non-negative.")
+        if not np.isfinite(float(value)) or float(value) <= 0:
+            raise ValueError(f"{name} must be finite and positive.")
 
     cur = _normalize_snapshot(current, "Current")
     prev = _normalize_snapshot(previous, "Previous")
@@ -90,12 +98,12 @@ def compare_screener_snapshots(
             result = row[col]
             return default if pd.isna(result) else result
 
-        current_score = pd.to_numeric(pd.Series([value(current_row, cur_score_col)]), errors="coerce").iloc[0]
-        previous_score = pd.to_numeric(pd.Series([value(previous_row, prev_score_col)]), errors="coerce").iloc[0]
+        current_score = _finite_number(value(current_row, cur_score_col))
+        previous_score = _finite_number(value(previous_row, prev_score_col))
         score_delta = current_score - previous_score if pd.notna(current_score) and pd.notna(previous_score) else np.nan
 
-        current_momentum = pd.to_numeric(pd.Series([value(current_row, cur_mom_col)]), errors="coerce").iloc[0]
-        previous_momentum = pd.to_numeric(pd.Series([value(previous_row, prev_mom_col)]), errors="coerce").iloc[0]
+        current_momentum = _finite_number(value(current_row, cur_mom_col))
+        previous_momentum = _finite_number(value(previous_row, prev_mom_col))
         momentum_delta = current_momentum - previous_momentum if pd.notna(current_momentum) and pd.notna(previous_momentum) else np.nan
 
         current_trend = _bool_series(pd.Series([value(current_row, "Trend OK", False)])).iloc[0]
