@@ -11,6 +11,7 @@ A Streamlit research environment for screening equities, reviewing price and fun
 - **Official filing fundamentals:** SEC EDGAR Company Facts for supported filers, with every fact filtered by its filing date for as-of snapshots; separate SEC submissions metadata supplies SIC codes/descriptions and a coarse SIC major-industry group. It is not a GICS/ICB sector feed. Enter a contact email in the sidebar or set the Streamlit secret `SEC_CONTACT_EMAIL`.
 - **Explicit data coverage:** missing metrics stay missing; the app does not manufacture neutral 50-point fundamental scores.
 - **Optional revisions and sentiment:** timestamped 0–100 CSV inputs, aligned point-in-time to decision dates; no fake default sentiment.
+- **Weekly snapshot review:** export a complete screener snapshot, upload it during the next review, and see material score/momentum moves, trend deterioration, 50-day-low breaches, signal changes, new/removed tickers, and newer filings. The review queue prioritizes manual exit/thesis checks and does not issue automatic orders.
 - **Monthly backtest:** score-driven top-N portfolio, trend/ADX/breakout gates, score hysteresis, replacement limits, optional cap of holdings per coarse SEC SIC group, equal-weight or inverse-ATR weights, entry/exit counts and holding-duration stats, equity curve, drawdown/volatility/Sharpe, rebalance audit and transaction-cost sensitivity.
 - **Execution-cost assumptions:** separate commission, half-spread and slippage in bps applied to gross traded notional; stop exits add modelled sell turnover. This is still a cost proxy, not a broker fill simulation, and does not include fixed fees, market impact or FX.
 - **Stop variants:** no stop/month-end rebalance, month-end 50-session low, daily-bar ATR trailing stop, daily-bar 50-session low, or both. Daily stops use information from the previous close and approximate gap-aware fills: open when the market gaps through the stop, otherwise at the stop level. High-water marks persist across monthly rebalance dates, and stop exits incur modeled transaction costs. This is not an intraday execution engine.
@@ -106,7 +107,7 @@ Required: `Date,Ticker,Type,Quantity,Price`
 
 Optional: `Fees,Currency`
 
-Type is `BUY` or `SELL`; quantities are positive. Sales that exceed available FIFO inventory are rejected. Transactions are processed in their stated currency; the tool does not aggregate currencies into a common base currency.
+Type is `BUY` or `SELL`; quantities are positive. Sales that exceed available FIFO inventory are rejected. Transactions are processed in their stated currency; the tool does not aggregate currencies into a common base currency. If `Currency` is omitted or blank, it remains `UNKNOWN` — the app does not silently assume USD, and CZK tax review cannot rely on an unknown-currency ledger. Numeric values must be finite; blanks/NaN/infinity are rejected.
 
 ## Test suite
 
