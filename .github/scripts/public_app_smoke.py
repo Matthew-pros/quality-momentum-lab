@@ -128,7 +128,7 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
                         if visible_error.count() > 0 and visible_error.first.is_visible():
                             # Let a later retry recover from a rebuild transition, but keep
                             # the visible error in the final diagnostics if it persists.
-                            last_body_text = "STREAMLIT APPLICATION ERROR\\n" + last_body_text
+                            last_body_text = "STREAMLIT APPLICATION ERROR\n" + last_body_text
                             consecutive_host_shell_only = 0
                         elif state == "current_build":
                             rendered_current_build = True
