@@ -91,7 +91,9 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
-- [x] Ověřit současnou sadu regresních, integračních a UI smoke testů v Pythonu 3.12 i 3.14; poslední ověřený kódový běh zahrnoval 95 úspěšných testů na každé verzi.
+- [x] Přidat samostatný Playwright browser smoke check veřejné nasazené aplikace: spouští se po aktualizaci `main`, týdně a ručně; testuje health endpoint, viditelnost hlavičky aplikace a otevření Screener tabu.
+- [x] Přidat unit testy URL validace deployment smoke scriptu; Playwright se načítá pouze při skutečné browser kontrole, nikoli do běžných runtime dependencies.
+- [x] Ověřit současnou sadu regresních, integračních a UI smoke testů v Pythonu 3.12 i 3.14; na commitu `02064ccc` prošlo 95 testů při 82,44% coverage v obou verzích.
 - [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
 - [ ] Ověřit poslední nasazený build a reálný log Streamlit Cloud; GitHub Actions testuje kód, nikoli úspěšné sestavení/serving na platformě Streamlit.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
