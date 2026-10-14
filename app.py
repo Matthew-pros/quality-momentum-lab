@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
+from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.review import compare_screener_snapshots
@@ -49,6 +49,12 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def cached_tiingo_market_data(symbols: tuple[str, ...], token: str, period: str):
+    # The token is used only as a cache-key input and request header; never printed
+    # or written to repository/secrets. Users should clear cached data after use.
+    return load_tiingo_market_data(list(symbols), token, period)
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def cached_sec_map(email: str):
@@ -176,6 +182,7 @@ with st.sidebar:
         "Zdroj cenových dat",
         [
             "Demo — syntetická data (bez externího API)",
+            "Tiingo EOD — vlastní API token (osobní data)",
             "Import OHLCV CSV (vlastní/licencovaná data)",
         ],
         index=0,
@@ -190,6 +197,15 @@ with st.sidebar:
         disabled=is_demo_mode,
         help="Demo režim používá SIM01–SIM12 a generuje pouze syntetické řady. Při nahrání CSV historického členství se tickery z tohoto CSV stanou pro backtest autoritativním univerzem."
     )
+    tiingo_token = st.text_input(
+        "Tiingo API token (vlastní účet)",
+        value="",
+        type="password",
+        disabled=price_provider != "Tiingo EOD — vlastní API token (osobní data)",
+        help="Každý uživatel musí vložit svůj vlastní token. Aplikace token nezapisuje do repozitáře ani logů; požadavek jde přímo z běžící Streamlit aplikace na Tiingo."
+    )
+    if price_provider.startswith("Tiingo"):
+        st.caption("Tiingo EOD · používá tvůj token a účet. Před použitím se seznam s [API dokumentací](https://www.tiingo.com/documentation/end-of-day) a [Developer Program pravidly](https://www.tiingo.com/documentation/appendix/developers). Data musí zůstat v mezích tvé licence.")
     price_csv_upload = st.file_uploader(
         "Historie OHLCV CSV",
         type=["csv"],
@@ -210,17 +226,17 @@ with st.sidebar:
     st.caption("CSV sloupce: Date,Ticker,Open,High,Low,Close; doporučeno doplnit Adj Close,Volume,Currency. Jeden řádek = jeden ticker a obchodní den.")
 
     currency_confirm_usd = st.checkbox(
-        "Potvrzuji, že všechny importované ceny jsou v USD (včetně FX přepočtu)",
+        "Potvrzuji, že všechny ceny z aktuálního zdroje jsou v USD (včetně FX přepočtu)",
         value=False,
         disabled=is_demo_mode,
-        help="Použij jen tehdy, když CSV neuvádí sloupec Currency. Všechny ceny včetně zahraničních titulů musí být již přepočtené do USD. Pokud Currency obsahuje známou jinou měnu než USD, checkbox ji nepřebije."
+        help="Použij jen tehdy, když zdroj neuvádí spolehlivou měnu (například Tiingo EOD). Všechny ceny včetně zahraničních titulů musí být již přepočtené do USD. Pokud CSV obsahuje známou jinou měnu než USD, checkbox ji nepřebije."
     )
     universe_history_upload = st.file_uploader(
         "Historické složení investičního univerza (volitelné CSV)",
         type=["csv"],
         key="universe_membership_csv",
-        disabled=is_demo_mode or price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
-        help="Intervaly členství: Ticker,Start date,End date. End date může být prázdné pro otevřený interval. Ticker list v souboru bude autoritativní; zahrň i později delistované tituly."
+        disabled=is_demo_mode,
+        help="Intervaly členství: Ticker,Start date,End date. End date může být prázdné pro otevřený interval. Ticker list v souboru bude autoritativní; zahrň i později delistované tituly. U Tiingo se pro každý člen stáhnou ceny přes tvůj token a musí být dostupné i delistované řady."
     )
     membership_template = pd.DataFrame([
         {"Ticker":"AAA","Start date":"2015-01-01","End date":"2020-12-31"},
@@ -237,6 +253,8 @@ with st.sidebar:
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
     if is_demo_mode:
         st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
+    elif price_provider.startswith("Tiingo"):
+        st.caption("Ceny načítá Tiingo End-of-Day (zdroj uveden u tabulek). Používej vlastní účet/token podle podmínek služby; pro veřejnou sdílenou distribuci dat může být nutná samostatná licence.")
     else:
         st.caption("CSV režim nevolá žádný externí cenový API endpoint. Použij jen data, pro která máš práva k analýze a veřejnému zobrazení.")
     st.divider()
@@ -332,6 +350,11 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     try:
         if is_demo_mode:
             price_data_all, price_report = generate_demo_market_data(list(symbols), period)
+        elif price_provider.startswith("Tiingo"):
+            if not tiingo_token.strip():
+                st.error("Vlož svůj vlastní Tiingo API token. Token se do repozitáře ani veřejných secrets neukládá.")
+                st.stop()
+            price_data_all, price_report = cached_tiingo_market_data(symbols, tiingo_token.strip(), period)
         elif price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
             if price_csv_upload is None:
                 st.info("Vybraný je CSV režim. Nahraj historii OHLCV v levém panelu a případně uprav investiční univerzum tak, aby odpovídalo tickerům v souboru.")
@@ -416,15 +439,20 @@ elif currency_unknown_tickers and currency_confirm_usd:
             price_report.loc[price_report["Ticker"].eq(ticker), "Currency"] = "USD (user-confirmed)"
 
 # Preserve source provenance in every downloadable data-quality report.
-price_source_label = "Deterministic synthetic DEMO" if is_demo_mode else "User-supplied OHLCV CSV"
-source_filename = "" if is_demo_mode or price_csv_upload is None else price_csv_upload.name
+price_source_label = (
+    "Deterministic synthetic DEMO" if is_demo_mode
+    else ("Tiingo EOD (user token)" if price_provider.startswith("Tiingo") else "User-supplied OHLCV CSV")
+)
+source_filename = "" if is_demo_mode or price_provider.startswith("Tiingo") or price_csv_upload is None else price_csv_upload.name
 if "Price source" in price_report:
     price_report = price_report.drop(columns=["Price source"])
 if "Source file" in price_report:
     price_report = price_report.drop(columns=["Source file"])
 price_report.insert(0, "Price source", price_source_label)
 price_report.insert(1, "Source file", source_filename)
-if not is_demo_mode and price_csv_upload is not None:
+if not is_demo_mode and price_provider.startswith("Tiingo"):
+    price_report["Adjustment status"] = "Tiingo adjOHLC provided; adjustment basis not independently audited"
+elif not is_demo_mode and price_csv_upload is not None:
     no_adj_close = price_report.get("Message", pd.Series("", index=price_report.index)).fillna("").astype(str).str.contains("Adj Close absent")
     price_report["Adjustment status"] = np.where(
         no_adj_close,
