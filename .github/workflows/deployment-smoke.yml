@@ -1,6 +1,8 @@
 name: Public deployment smoke check
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       app_url:
@@ -17,7 +19,7 @@ permissions:
 
 concurrency:
   group: public-deployment-smoke
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   browser-smoke:
