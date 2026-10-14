@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import date
 import hashlib
 import time
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -405,6 +406,47 @@ def download_market_data(
             round(float(frame["Close"].isna().mean() * 100), 2), "",
         ]
     return assess_price_quality(prices, report)
+
+
+def parse_quote_currency_map(value: str | None) -> dict[str, str]:
+    """Parse explicit TICKER=ISO4217 quote currency metadata; never guess a currency."""
+    if value is None or not str(value).strip():
+        return {}
+    mapping: dict[str, str] = {}
+    parts = [part.strip() for part in re.split(r"[,;\\n]+", str(value)) if part.strip()]
+    for part in parts:
+        match = re.fullmatch(r"([A-Za-z0-9.^_-]+)\\s*[=:]\\s*([A-Za-z]{3})", part)
+        if not match:
+            raise ValueError(
+                f"Invalid quote currency entry {part!r}; use format AAPL=USD, SAP=EUR."
+            )
+        ticker, currency = match.group(1).upper(), match.group(2).upper()
+        if ticker in mapping and mapping[ticker] != currency:
+            raise ValueError(f"Ticker {ticker} has multiple quote currencies in the mapping.")
+        mapping[ticker] = currency
+    return mapping
+
+
+def apply_quote_currency_map(
+    prices: dict[str, pd.DataFrame],
+    report: pd.DataFrame,
+    currency_map: dict[str, str],
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Attach user-verified quote currency; unmapped instruments remain UNKNOWN."""
+    out_report = report.copy()
+    if "Ticker" not in out_report:
+        out_report["Ticker"] = []
+    if "Currency" not in out_report:
+        out_report["Currency"] = "UNKNOWN"
+    for ticker, frame in prices.items():
+        currency = str(currency_map.get(ticker, "UNKNOWN")).strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            currency = "UNKNOWN"
+        frame.attrs["currency"] = currency
+        if "Currency" in frame.columns:
+            frame["Currency"] = currency
+        out_report.loc[out_report["Ticker"].astype(str).str.upper().eq(ticker.upper()), "Currency"] = currency
+    return prices, out_report
 
 
 def load_tiingo_market_data(
