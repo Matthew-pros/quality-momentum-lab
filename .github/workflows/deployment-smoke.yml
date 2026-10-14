@@ -24,17 +24,15 @@ concurrency:
 jobs:
   browser-smoke:
     runs-on: ubuntu-latest
+    container:
+      # Pinned Playwright Python image includes matching Chromium and OS libraries,
+      # so the deployment check does not spend minutes apt-installing browser dependencies.
+      image: mcr.microsoft.com/playwright/python:v1.63.0-noble
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Install browser smoke dependency
-        run: python -m pip install --upgrade pip playwright
-      - name: Install Chromium
-        run: python -m playwright install --with-deps chromium
+      - name: Install matching Playwright Python package
+        run: python -m pip install --disable-pip-version-check playwright==1.63.0
       - name: Check public deployment
         env:
           MANUAL_APP_URL: ${{ inputs.app_url }}
