@@ -1,4 +1,4 @@
-# Quality Momentum Lab — research app v2.7.0
+# Quality Momentum Lab — research app v2.8.0
 
 **Public Streamlit app:** [Open Quality Momentum Lab](https://quality-momentum-lab-d48ep9tlvdzdufjr23z4wq.streamlit.app)
 
@@ -139,6 +139,6 @@ pytest -q --cov=qlab --cov-report=term-missing:skip-covered
 
 GitHub Actions compiles the application/modules, checks undefined Python names, reports coverage and runs regression, data-adapter, portfolio, tax-lot, DCF, walk-forward and offline Streamlit UI smoke tests on Python 3.12 and 3.14. A separate `pip-audit` job checks runtime dependencies for published vulnerabilities. Coverage XML is retained as a short-lived Actions artifact, and the `qlab` calculation/data package must maintain at least 80% line coverage in both runtime matrices.
 
-A separate browser-based deployment check runs after updates to `main`, weekly, and manually via **Actions → Public deployment smoke check → Run workflow**. Playwright waits for both the app marker and the exact visible build string `build 2.7.0`, then opens the Screener tab. This helps distinguish the newly deployed build from a still-running older revision when the hosted redeploy is delayed. The check validates the publicly served UI, not provider-token access or the accuracy/licensing of an uploaded dataset. See [.github/workflows/deployment-smoke.yml](.github/workflows/deployment-smoke.yml).
+A separate browser-based deployment check runs after updates to `main`, weekly, and manually via **Actions → Public deployment smoke check → Run workflow**. Playwright reads `APP_VERSION` from the checked-out source, polls/reloads the hosted page until that exact build is visible, then opens the Screener tab. On failure it logs the visible page text and browser errors and uploads a screenshot artifact. This helps distinguish the newly deployed build from a still-running older revision when the hosted redeploy is delayed. The check validates the publicly served UI, not provider-token access or the accuracy/licensing of an uploaded dataset. See [.github/workflows/deployment-smoke.yml](.github/workflows/deployment-smoke.yml).
 
 See [ROADMAP.md](ROADMAP.md) for production readiness gates.
