@@ -737,8 +737,8 @@ def run_monthly_backtest(
     }
     if stop_mode not in valid_stop_modes:
         raise ValueError(f"Unsupported stop_mode: {stop_mode}")
-    if stop_atr_multiple <= 0:
-        raise ValueError("stop_atr_multiple must be positive.")
+    if not np.isfinite(float(stop_atr_multiple)) or float(stop_atr_multiple) <= 0:
+        raise ValueError("stop_atr_multiple must be finite and positive.")
     components = [half_spread_bps, slippage_bps] + ([] if commission_bps is None else [commission_bps])
     if any(not np.isfinite(float(value)) or float(value) < 0 for value in components):
         raise ValueError("Commission, spread and slippage cost assumptions must be finite and non-negative.")
@@ -975,6 +975,11 @@ def run_monthly_backtest(
         transaction_cost = turnover * effective_cost_bps / 10_000
         stop_transaction_cost = stop_turnover * effective_cost_bps / 10_000
         net_return = gross_return - transaction_cost
+        if not np.isfinite(gross_return) or not np.isfinite(net_return) or net_return <= -1.0:
+            raise ValueError(
+                f"Invalid portfolio return for return period {row_return_date.date()}: "
+                f"gross={gross_return!r}, net={net_return!r}. A monthly loss cannot be at or below -100%."
+            )
         equity_before_period = equity
         transaction_cost_value = equity_before_period * transaction_cost
         equity *= (1 + net_return)
@@ -1168,6 +1173,11 @@ def cost_sensitivity(
     for bps in sorted(set(scenarios)):
         estimated_cost = turnover * float(bps) / 10_000
         net = gross - estimated_cost
+        if (net <= -1.0).any():
+            raise ValueError(
+                f"Cost scenario {float(bps):g} bps causes a monthly return at or below -100%; "
+                "use a lower cost assumption or verify turnover."
+            )
         equity_before = float(initial) * (1 + net).cumprod().shift(1).fillna(float(initial))
         cost_value = estimated_cost * equity_before
         equity = float(initial) * (1 + net).cumprod()
