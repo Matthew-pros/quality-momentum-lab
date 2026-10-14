@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 
 EXPECTED_MARKER = "QUALITY MOMENTUM LAB"
+EXPECTED_BUILD_MARKER = "build 2.7.0"
 EXPECTED_SCREENER_HEADING = "Screener a podkladové metriky"
 
 
@@ -52,6 +53,10 @@ def run_smoke(url: str, timeout_ms: int = 120_000) -> None:
                 raise RuntimeError(f"The hosted app returned HTTP {response.status}.")
 
             page.get_by_text(EXPECTED_MARKER, exact=False).first.wait_for(state="visible", timeout=timeout_ms)
+            # The generic app marker may exist on an old deployment. Wait for the
+            # exact build marker too, so a successful smoke run confirms fresh code
+            # reached the public Streamlit host.
+            page.get_by_text(EXPECTED_BUILD_MARKER, exact=False).first.wait_for(state="visible", timeout=timeout_ms)
             page.get_by_role("tab", name="Screener").click()
             page.get_by_text(EXPECTED_SCREENER_HEADING, exact=True).wait_for(state="visible", timeout=timeout_ms)
 
@@ -59,7 +64,7 @@ def run_smoke(url: str, timeout_ms: int = 120_000) -> None:
             if visible_error.count() > 0 and visible_error.first.is_visible():
                 raise RuntimeError("Streamlit displayed its application-error message.")
 
-            print(f"PASS: HTTP {response.status}; public app shell and Screener tab rendered at {base_url}")
+            print(f"PASS: HTTP {response.status}; build {EXPECTED_BUILD_MARKER}; public app shell and Screener tab rendered at {base_url}")
         except PlaywrightTimeoutError as exc:
             raise RuntimeError(
                 "The deployed app did not render the expected marker/tab before the timeout. "
