@@ -608,16 +608,21 @@ def _concept_records(
     tags: list[str],
     cutoff: str | date,
 ) -> list[dict[str, Any]]:
-    """Return observations disclosed strictly before cutoff, for close-based decisions."""
+    """Collect observations from alternative XBRL tags without looking past cutoff.
+
+    Tags are ordered by semantic preference. Records from lower-priority tags can
+    backfill fiscal periods where a preferred tag is absent; the same period is later
+    resolved to the most recently filed observation, with tag priority as a tie-break.
+    """
     cutoff_text = pd.Timestamp(cutoff).date().isoformat()
     facts = company_facts.get("facts", {})
     taxonomies = [facts.get("us-gaap", {}), facts.get("dei", {}), facts.get("ifrs-full", {})]
-    for tag in tags:
-        for taxonomy in taxonomies:
+    records: list[dict[str, Any]] = []
+    for tag_priority, tag in enumerate(tags):
+        for taxonomy_priority, taxonomy in enumerate(taxonomies):
             node = taxonomy.get(tag)
             if not node:
                 continue
-            records = []
             for unit, observations in node.get("units", {}).items():
                 for obs in observations:
                     filed, end = str(obs.get("filed", "")), str(obs.get("end", ""))
@@ -625,11 +630,12 @@ def _concept_records(
                     if not filed or not end or filed >= cutoff_text or end > cutoff_text:
                         continue
                     row = dict(obs)
-                    row["unit"], row["tag"] = unit, tag
+                    row["unit"] = unit
+                    row["tag"] = tag
+                    row["_tag_priority"] = tag_priority
+                    row["_taxonomy_priority"] = taxonomy_priority
                     records.append(row)
-            if records:
-                return records
-    return []
+    return records
 
 
 def _preferred_xbrl_unit(records: list[dict[str, Any]]) -> str:
@@ -683,7 +689,14 @@ def _annual_series(company_facts: dict[str, Any], tags: list[str], cutoff: str |
         if not 320 <= days <= 410:
             continue
         key = str(end)
-        if key not in chosen or str(row.get("filed", "")) > str(chosen[key].get("filed", "")):
+        if (
+            key not in chosen
+            or str(row.get("filed", "")) > str(chosen[key].get("filed", ""))
+            or (
+                str(row.get("filed", "")) == str(chosen[key].get("filed", ""))
+                and int(row.get("_tag_priority", 0)) < int(chosen[key].get("_tag_priority", 0))
+            )
+        ):
             chosen[key] = row
     if not chosen:
         return pd.Series(dtype=float)
@@ -708,7 +721,11 @@ def _latest_instant(
         candidates = [row for row in candidates if str(row.get("unit", "")) == chosen_unit]
     if not candidates:
         return np.nan, "", ""
-    candidates.sort(key=lambda row: (str(row.get("end", "")), str(row.get("filed", ""))))
+    candidates.sort(key=lambda row: (
+        str(row.get("end", "")),
+        str(row.get("filed", "")),
+        -int(row.get("_tag_priority", 0)),
+    ))
     row = candidates[-1]
     try:
         value = float(row["val"])
@@ -738,7 +755,14 @@ def _latest_annual_with_filing(
         if not 320 <= days <= 410:
             continue
         end = str(row.get("end", ""))
-        if end not in by_end or str(row.get("filed", "")) > str(by_end[end].get("filed", "")):
+        if (
+            end not in by_end
+            or str(row.get("filed", "")) > str(by_end[end].get("filed", ""))
+            or (
+                str(row.get("filed", "")) == str(by_end[end].get("filed", ""))
+                and int(row.get("_tag_priority", 0)) < int(by_end[end].get("_tag_priority", 0))
+            )
+        ):
             by_end[end] = row
     if series.empty:
         return np.nan, "", ""
@@ -789,7 +813,9 @@ def sec_fundamental_snapshot(
         "StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
     ]
     debt_noncurrent_tags = [
-        "LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent", "LongTermDebt"
+        # Use explicitly non-current balances only. LongTermDebt is not a safe synonym
+        # in every filing and can overlap current-debt tags, causing double counting.
+        "LongTermDebtNoncurrent", "LongTermDebtAndFinanceLeaseObligationsNoncurrent"
     ]
     debt_current_tags = [
         "LongTermDebtCurrent", "LongTermDebtAndFinanceLeaseObligationsCurrent", "ShortTermBorrowings"
