@@ -44,3 +44,11 @@ jobs:
             APP_URL="$DEFAULT_APP_URL"
           fi
           python .github/scripts/public_app_smoke.py --url "$APP_URL"
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: public-app-smoke-diagnostics
+          path: artifacts/public-app-smoke-failure.png
+          if-no-files-found: warn
+          retention-days: 7
