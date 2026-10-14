@@ -197,6 +197,18 @@ with st.sidebar:
         disabled=price_provider != "Import OHLCV CSV (vlastní/licencovaná data)",
         help="Long format: Date,Ticker,Open,High,Low,Close; volitelně Adj Close,Volume,Currency. Měna se nekonvertuje."
     )
+    ohlcv_template = pd.DataFrame([
+        {"Date":"2025-01-02","Ticker":"AAA","Open":99.0,"High":102.0,"Low":98.0,"Close":101.0,"Adj Close":101.0,"Volume":1000000,"Currency":"USD"},
+        {"Date":"2025-01-02","Ticker":"BBB","Open":49.0,"High":51.0,"Low":48.0,"Close":50.0,"Adj Close":50.0,"Volume":500000,"Currency":"USD"},
+    ])
+    st.download_button(
+        "Stáhnout OHLCV CSV šablonu",
+        ohlcv_template.to_csv(index=False).encode("utf-8"),
+        "ohlcv_template.csv", "text/csv",
+        help="Pouze vzor sloupců. Strategie potřebuje dostatečně dlouhou denní historii (nejméně přibližně 300 řádků na ticker); řádky z tohoto vzoru nenahrazují skutečná data."
+    )
+    st.caption("CSV sloupce: Date,Ticker,Open,High,Low,Close; doporučeno doplnit Adj Close,Volume,Currency. Jeden řádek = jeden ticker a obchodní den.")
+
     currency_confirm_usd = st.checkbox(
         "Potvrzuji, že všechny importované ceny jsou v USD (včetně FX přepočtu)",
         value=False,
