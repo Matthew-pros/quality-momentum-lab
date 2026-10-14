@@ -55,7 +55,7 @@ def build_holdings_review(
         ])
 
     if screener is None or screener.empty or "Ticker" not in screener:
-        lookup = pd.DataFrame().set_index(pd.Index([], name="Ticker"))
+        lookup = pd.DataFrame(index=pd.Index([], name="Ticker"))
     else:
         frame = screener.copy()
         frame["Ticker"] = frame["Ticker"].astype(str).str.strip().str.upper()
