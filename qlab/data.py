@@ -28,6 +28,27 @@ def normalize_tickers(text_or_tickers: str | list[str]) -> list[str]:
     return list(dict.fromkeys(str(x).strip().upper() for x in raw if str(x).strip()))
 
 
+def currency_validation_universe(
+    investment_tickers: list[str] | tuple[str, ...],
+    benchmark_ticker: str | None,
+    available_tickers: list[str] | tuple[str, ...],
+) -> list[str]:
+    """Return only price series actually available for USD-basis validation.
+
+    A missing benchmark is a performance-comparison limitation, not an unknown
+    currency series. Missing investable holdings are handled separately by the
+    validator's missing_tickers argument so they still block portfolio calculations.
+    """
+    investment = normalize_tickers(list(investment_tickers))
+    available = set(normalize_tickers(list(available_tickers)))
+    required = list(investment)
+    if benchmark_ticker:
+        benchmark = normalize_tickers([benchmark_ticker])
+        if benchmark and benchmark[0] in available and benchmark[0] not in required:
+            required.append(benchmark[0])
+    return required
+
+
 def validate_usd_price_basis(
     tickers: list[str] | tuple[str, ...],
     currencies: dict[str, str],
