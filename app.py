@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
+from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, parse_quote_currency_map, apply_quote_currency_map, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.review import compare_screener_snapshots
@@ -219,6 +219,13 @@ with st.sidebar:
         disabled=price_provider != "Tiingo EOD — vlastní API token (osobní data)",
         help="Každý uživatel musí vložit svůj vlastní token. Aplikace token nezapisuje do repozitáře ani logů; požadavek jde přímo z běžící Streamlit aplikace na Tiingo."
     )
+    tiingo_currency_map_text = st.text_input(
+        "Ověřené měny kotace tickerů (volitelné)",
+        value="",
+        disabled=price_provider != "Tiingo EOD — vlastní API token (osobní data)",
+        placeholder="AAPL=USD, SAP=EUR",
+        help="Zapiš jen měnu kotace ověřenou pro daný listing. Například AAPL=USD, SAP=EUR. Známá ne-USD měna zablokuje USD backtest, protože FX konverze není implementována."
+    )
     if price_provider.startswith("Tiingo"):
         st.caption("Tiingo EOD · používá tvůj token a účet. Před použitím se seznam s [API dokumentací](https://www.tiingo.com/documentation/end-of-day) a [Developer Program pravidly](https://www.tiingo.com/documentation/appendix/developers). Data musí zůstat v mezích tvé licence.")
     price_csv_upload = st.file_uploader(
@@ -371,6 +378,10 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
                 st.error("Vlož svůj vlastní Tiingo API token. Token se do repozitáře ani veřejných secrets neukládá.")
                 st.stop()
             price_data_all, price_report = session_tiingo_market_data(symbols, tiingo_token.strip(), period)
+            quote_currency_map = parse_quote_currency_map(tiingo_currency_map_text)
+            price_data_all, price_report = apply_quote_currency_map(
+                price_data_all, price_report, quote_currency_map
+            )
         elif price_provider == "Import OHLCV CSV (vlastní/licencovaná data)":
             if price_csv_upload is None:
                 st.info("Vybraný je CSV režim. Nahraj historii OHLCV v levém panelu a případně uprav investiční univerzum tak, aby odpovídalo tickerům v souboru.")
