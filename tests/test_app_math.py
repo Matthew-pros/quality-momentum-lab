@@ -1278,6 +1278,32 @@ def test_csv_price_adapter_requires_currency_for_all_rows_when_currency_column_i
         load_ohlcv_csv(io.BytesIO(payload), expected_tickers=["AAA"])
 
 
+def test_currency_gate_ignores_absent_benchmark_but_includes_present_benchmark():
+    from qlab.data import currency_validation_universe, validate_usd_price_basis
+
+    # A missing benchmark should remove its currency from the required quote basis.
+    required = currency_validation_universe(["AAA", "BBB"], "SPY", ["AAA", "BBB"])
+    assert required == ["AAA", "BBB"]
+    ready = validate_usd_price_basis(required, {"AAA": "USD", "BBB": "USD"})
+    assert ready["ready"] is True
+
+    # If the benchmark is present, it participates in the same quote-currency check.
+    required_with_benchmark = currency_validation_universe(["AAA", "BBB"], "SPY", ["AAA", "BBB", "SPY"])
+    assert required_with_benchmark == ["AAA", "BBB", "SPY"]
+    mixed = validate_usd_price_basis(
+        required_with_benchmark, {"AAA": "USD", "BBB": "USD", "SPY": "EUR"}
+    )
+    assert mixed["ready"] is False
+    assert mixed["non_usd_currencies"] == ["EUR"]
+
+    # Missing holdings still block money calculations independently of benchmark status.
+    missing_holding = validate_usd_price_basis(
+        required, {"AAA": "USD"}, missing_tickers=["BBB"]
+    )
+    assert missing_holding["ready"] is False
+    assert missing_holding["missing_tickers"] == ["BBB"]
+
+
 def test_usd_price_basis_gate_requires_usd_metadata_or_explicit_attestation():
     from qlab.data import validate_usd_price_basis
 
