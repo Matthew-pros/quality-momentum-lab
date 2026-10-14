@@ -1,4 +1,4 @@
-# Quality × Value × Momentum Lab — roadmap (research app v2.6.0)
+# Quality × Value × Momentum Lab — roadmap (research app v2.6.1)
 
 ## Finální cíl
 
