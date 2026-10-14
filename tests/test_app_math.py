@@ -1474,3 +1474,22 @@ def test_fifo_never_assumes_usd_when_currency_is_missing():
     assert realized.iloc[0]["Currency"] == "UNKNOWN"
     assert "convert proceeds to CZK" in realized.iloc[0]["Tax review status"]
     assert "Potential value-test exemption" not in realized.iloc[0]["Tax review status"]
+
+
+def test_sec_history_reloads_filing_deferred_on_exact_prior_decision_date():
+    from qlab.data import sec_snapshot_to_history
+
+    facts = {"facts":{"us-gaap":{
+        "Revenues":{"units":{"USD":[
+            {"start":"2021-01-01","end":"2021-12-31","val":100,"filed":"2022-02-15","form":"10-K"},
+            # Filed exactly on the first signal date: excluded then, available at the next month-end.
+            {"start":"2022-01-01","end":"2022-12-31","val":150,"filed":"2023-03-31","form":"10-K"},
+        ]}}
+    }}}
+    bundle = {"ticker":"AAA","title":"AAA Inc.","payload":facts}
+    dates = pd.to_datetime(["2023-03-31","2023-04-30"])
+    history = sec_snapshot_to_history(bundle, list(dates))
+    assert history.iloc[0]["Revenue"] == 100
+    assert history.iloc[1]["Revenue"] == 150
+    assert history.iloc[0]["Latest filing date"] == "2022-02-15"
+    assert history.iloc[1]["Latest filing date"] == "2023-03-31"
