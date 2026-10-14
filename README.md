@@ -116,4 +116,4 @@ pip install pytest
 pytest -q
 ```
 
-GitHub Actions runs these checks on pushes and pull requests. See [ROADMAP.md](ROADMAP.md) for production readiness gates.
+GitHub Actions compiles the app/modules and runs the regression + offline Streamlit UI smoke tests on pushes and pull requests under Python 3.12 and 3.14. See [ROADMAP.md](ROADMAP.md) for production readiness gates.
