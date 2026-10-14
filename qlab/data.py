@@ -413,9 +413,9 @@ def parse_quote_currency_map(value: str | None) -> dict[str, str]:
     if value is None or not str(value).strip():
         return {}
     mapping: dict[str, str] = {}
-    parts = [part.strip() for part in re.split(r"[,;\\n]+", str(value)) if part.strip()]
+    parts = [part.strip() for part in re.split(r"[,;\n]+", str(value)) if part.strip()]
     for part in parts:
-        match = re.fullmatch(r"([A-Za-z0-9.^_-]+)\\s*[=:]\\s*([A-Za-z]{3})", part)
+        match = re.fullmatch(r"([A-Za-z0-9.^_-]+)\s*[=:]\s*([A-Za-z]{3})", part)
         if not match:
             raise ValueError(
                 f"Invalid quote currency entry {part!r}; use format AAPL=USD, SAP=EUR."
