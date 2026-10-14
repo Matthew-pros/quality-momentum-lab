@@ -176,8 +176,8 @@ def assess_price_quality(
             invalid |= low > pd.concat([open_price, close], axis=1).min(axis=1)
         if "Volume" in clean:
             volume = pd.to_numeric(clean["Volume"], errors="coerce")
-            # Missing volume is allowed; a negative volume is not.
-            invalid |= volume.notna() & (volume < 0)
+            # Missing volume is allowed; non-finite or negative volume is not.
+            invalid |= volume.notna() & (~np.isfinite(volume) | (volume < 0))
         invalid_count = int(invalid.sum())
         # Keep the original invalid-row count in report but prevent invalid values from
         # contaminating technicals, price levels, returns, or position sizing.
@@ -433,8 +433,8 @@ def load_ohlcv_csv(
     raw["Ticker"] = raw["Ticker"].astype(str).str.upper().str.strip()
     if raw["Date"].isna().any():
         raise ValueError("CSV contains one or more unparseable Date values.")
-    if raw["Ticker"].eq("").any():
-        raise ValueError("CSV contains an empty Ticker.")
+    if raw["Ticker"].eq("").any() or raw["Ticker"].str.lower().isin({"nan", "none", "null"}).any():
+        raise ValueError("CSV contains an empty or missing Ticker value.")
     for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
         if column in raw:
             raw[column] = pd.to_numeric(raw[column], errors="coerce")
