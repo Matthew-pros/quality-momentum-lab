@@ -41,7 +41,7 @@ jobs:
       - name: Check for undefined Python names
         run: ruff check app.py qlab tests --select F821,F822,F823
       - name: Run regression, integration, and Streamlit smoke tests
-        run: python -m pytest -q --cov=qlab --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml
+        run: python -m pytest -q --cov=qlab --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml --cov-fail-under=80
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
