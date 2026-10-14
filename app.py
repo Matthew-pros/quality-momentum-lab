@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -426,8 +427,13 @@ price_data_signature = hashlib.sha256()
 if not is_demo_mode and price_csv_upload is not None:
     price_data_signature.update(price_csv_upload.getvalue())
 else:
-    for ticker in sorted(prices):
-        frame = prices[ticker]
+    # Include the benchmark as well as investable prices: a benchmark refresh must
+    # invalidate cached performance comparisons even when stock prices did not change.
+    for ticker in sorted(price_data_all):
+        frame = price_data_all[ticker]
+        if frame is None or frame.empty:
+            price_data_signature.update(f"{ticker}:EMPTY".encode("utf-8"))
+            continue
         price_data_signature.update(ticker.encode("utf-8"))
         price_data_signature.update(pd.util.hash_pandas_object(frame, index=True).to_numpy(dtype="uint64").tobytes())
 price_data_signature = price_data_signature.hexdigest()
@@ -802,11 +808,39 @@ with tab_strategy:
     classified_sector_count = sum(1 for ticker in universe if sector_map.get(ticker, "Unclassified") not in {"Unclassified", "Unknown", ""})
     if max_sector_positions > 0 and classified_sector_count < len(universe):
         st.info(f"Limit SIC skupin pokrývá {classified_sector_count}/{len(universe)} titulů. Neklasifikované tituly jsou omezením vynechány; současná klasifikace nemusí odpovídat historickému SIC za celou dobu testu.")
-    signature = (tuple(universe), period, price_data_signature, universe_history_signature,
-        currency_ok, currency_confirm_usd, tuple(currency_non_usd), top_n, min_adx, min_score, hysteresis, max_replacements,
-        max_sector_positions, commission_bps, half_spread_bps, slippage_bps, cost_bps, breakout_filter,
-        weighting_method, backtest_max_weight, stop_mode, stop_atr,
-        use_pit, use_estimated_value, bool(sentiment_df is not None), bool(revision_df is not None), capital)
+    sentiment_input_signature = (
+        hashlib.sha256(sentiment_upload.getvalue()).hexdigest() if sentiment_upload is not None else "no-sentiment"
+    )
+    revision_input_signature = (
+        hashlib.sha256(revision_upload.getvalue()).hexdigest() if revision_upload is not None else "no-revisions"
+    )
+    fundamentals_signature_payload = {
+        ticker: {
+            key: fundamentals.get(ticker, {}).get(key)
+            for key in [
+                "Source", "Financial period", "Latest filing date", "Revenue unit", "Net income unit",
+                "FCF unit", "Fundamental coverage %", "Revenue growth %", "Earnings growth %",
+                "ROE %", "Profit margin %", "FCF margin %", "FCF yield %",
+                "P/E (annual EPS proxy)", "Price currency", "Price / net-income unit match",
+            ]
+        }
+        for ticker in sorted(fundamentals)
+    }
+    fundamentals_input_signature = hashlib.sha256(
+        json.dumps(fundamentals_signature_payload, sort_keys=True, default=str, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    currency_input_signature = hashlib.sha256(
+        json.dumps(currency_by_ticker, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    signature = (
+        tuple(universe), period, price_provider, price_data_signature, universe_history_signature,
+        currency_input_signature, currency_ok, currency_confirm_usd, tuple(currency_non_usd),
+        top_n, min_adx, min_score, hysteresis, max_replacements, max_sector_positions,
+        commission_bps, half_spread_bps, slippage_bps, cost_bps, breakout_filter,
+        weighting_method, backtest_max_weight, stop_mode, stop_atr, use_pit,
+        use_estimated_value, sentiment_input_signature, revision_input_signature,
+        fundamentals_input_signature, capital,
+    )
     run_backtest = st.button("Spustit / přepočítat backtest", type="primary", key="run_backtest", disabled=not currency_ok)
     compare_stop_button = st.button("Porovnat všechna výstupní pravidla", key="compare_stop_variants", disabled=not currency_ok)
     train_holdout_button = st.button(
