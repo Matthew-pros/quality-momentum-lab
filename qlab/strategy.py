@@ -703,6 +703,31 @@ def run_monthly_backtest(
     returns for the next month, with costs on gross traded notional. This is not an
     intraday fill simulation; the current symbol list can still create survivorship bias.
     """
+    if not isinstance(top_n, (int, np.integer)) or isinstance(top_n, bool) or top_n < 1:
+        raise ValueError("top_n must be a positive integer.")
+    if not isinstance(max_replacements, (int, np.integer)) or isinstance(max_replacements, bool) or max_replacements < 0:
+        raise ValueError("max_replacements must be a non-negative integer.")
+    for name, value, lower, upper in [
+        ("min_adx", min_adx, 0.0, 100.0),
+        ("min_score", min_score, 0.0, 100.0),
+        ("hysteresis", hysteresis, 0.0, 100.0),
+    ]:
+        if not np.isfinite(float(value)) or not lower <= float(value) <= upper:
+            raise ValueError(f"{name} must be finite and between {lower:g} and {upper:g}.")
+    if weighting_method not in {"Equal weight", "Inverse ATR"}:
+        raise ValueError("weighting_method must be 'Equal weight' or 'Inverse ATR'.")
+    if not np.isfinite(float(max_position_weight)) or not 0 < float(max_position_weight) <= 1:
+        raise ValueError("max_position_weight must be finite and in (0, 1].")
+    if require_breakout not in {"None", "20-day", "55-day"}:
+        raise ValueError("require_breakout must be 'None', '20-day' or '55-day'.")
+    if max_sector_positions is not None and (
+        not isinstance(max_sector_positions, (int, np.integer))
+        or isinstance(max_sector_positions, bool)
+        or max_sector_positions < 1
+    ):
+        raise ValueError("max_sector_positions must be None or a positive integer.")
+    if not np.isfinite(float(cost_bps)) or float(cost_bps) < 0:
+        raise ValueError("cost_bps must be finite and non-negative.")
     valid_stop_modes = {
         "No stop / month-end rebalancing",
         "Month-end 50-day low",
