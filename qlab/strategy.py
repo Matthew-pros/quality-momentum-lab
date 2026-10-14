@@ -1774,6 +1774,10 @@ def calculate_position_sizes(
     """ATR-based long-only sizing planner, not an order-execution system."""
     if screener.empty or not selected_tickers:
         return pd.DataFrame()
+    required_columns = {"Ticker", "Price", "ATR20"}
+    missing_columns = required_columns - set(screener.columns)
+    if missing_columns:
+        raise ValueError("Screener is missing required sizing columns: " + ", ".join(sorted(missing_columns)))
     if not np.isfinite(float(capital)) or capital <= 0:
         raise ValueError("Capital must be a positive finite value.")
     for name, value in [
@@ -1785,17 +1789,50 @@ def calculate_position_sizes(
     ]:
         if not np.isfinite(float(value)) or float(value) < 0:
             raise ValueError(f"{name} must be finite and non-negative.")
+    for name, value in [
+        ("risk_budget_pct", risk_budget_pct),
+        ("max_position_pct", max_position_pct),
+        ("max_total_exposure_pct", max_total_exposure_pct),
+        ("max_total_risk_pct", max_total_risk_pct),
+    ]:
+        if float(value) > 100:
+            raise ValueError(f"{name} cannot exceed 100%.")
     if stop_atr_multiple <= 0:
         raise ValueError("stop_atr_multiple must be positive.")
-    indexed = screener.set_index("Ticker")
+    if screener["Ticker"].astype(str).str.upper().duplicated().any():
+        duplicates = screener.loc[screener["Ticker"].astype(str).str.upper().duplicated(keep=False), "Ticker"].astype(str).unique().tolist()
+        raise ValueError("Screener has duplicate ticker rows: " + ", ".join(duplicates[:10]))
+    normalized_selected = [str(ticker).strip().upper() for ticker in selected_tickers]
+    if len(normalized_selected) != len(set(normalized_selected)):
+        raise ValueError("Selected tickers contain duplicates; select each ticker once.")
+    indexed = screener.copy()
+    indexed["Ticker"] = indexed["Ticker"].astype(str).str.upper().str.strip()
+    indexed = indexed.set_index("Ticker")
+    missing_selected = sorted(set(normalized_selected) - set(indexed.index))
+    if missing_selected:
+        raise ValueError("Selected ticker(s) are missing from the current screener: " + ", ".join(missing_selected))
     rows = []
-    for ticker in selected_tickers:
-        if ticker not in indexed.index:
-            continue
+    for ticker in normalized_selected:
         r = indexed.loc[ticker]
-        price = float(r.get("Price", np.nan))
-        atr = float(r.get("ATR20", np.nan))
+        try:
+            price = float(r.get("Price", np.nan))
+            atr = float(r.get("ATR20", np.nan))
+        except (TypeError, ValueError):
+            price, atr = np.nan, np.nan
         if not np.isfinite(price) or price <= 0 or not np.isfinite(atr) or atr <= 0:
+            rows.append({
+                "Ticker": ticker,
+                "Price": price if np.isfinite(price) and price > 0 else np.nan,
+                "ATR20": atr if np.isfinite(atr) and atr > 0 else np.nan,
+                "Stop distance": np.nan,
+                "Provisional stop": np.nan,
+                "Shares (risk-sized, capped)": 0,
+                "Position value": 0.0,
+                "Weight %": 0.0,
+                "Initial risk budget": 0.0,
+                "Risk if stop fills at stop price": 0.0,
+                "Sizing status": "INSUFFICIENT DATA — no valid positive price or ATR(20)",
+            })
             continue
         risk_money = float(capital) * float(risk_budget_pct) / 100
         stop_distance = float(stop_atr_multiple) * atr
@@ -1814,6 +1851,7 @@ def calculate_position_sizes(
             "Weight %": (shares * price / capital * 100) if capital else np.nan,
             "Initial risk budget": shares * stop_distance,
             "Risk if stop fills at stop price": shares * stop_distance,
+            "Sizing status": "OK" if shares > 0 else "ZERO SHARES — caps/risk budget too small for one share",
         })
     result = pd.DataFrame(rows)
     if result.empty:
