@@ -76,3 +76,18 @@ def test_public_smoke_classifies_hosted_page_state(body, build_marker, expected_
 )
 def test_public_smoke_host_shell_retry_limit_is_bounded(attempts, expected):
     assert MODULE.host_shell_retry_exhausted(attempts) is expected
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("QUALITY MOMENTUM LAB build 2.8.0", True),
+        ("Hosted with Streamlit", True),
+        ("Created by matthew-pros", True),
+        ("This app has encountered an error.", True),
+        ("", False),
+        ("Unrelated page text", False),
+    ],
+)
+def test_public_smoke_waits_for_recognizable_rendered_page_content(body, expected):
+    assert MODULE.page_state_is_observable(body) is expected

@@ -50,6 +50,20 @@ def host_shell_retry_exhausted(consecutive_attempts: int) -> bool:
     return consecutive_attempts >= HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS
 
 
+def page_state_is_observable(body: str) -> bool:
+    """Whether the page has rendered one of the app/host/error markers we need to classify."""
+    upper = " ".join(str(body or "").split()).upper()
+    return any(
+        marker in upper
+        for marker in (
+            EXPECTED_MARKER,
+            "HOSTED WITH STREAMLIT",
+            "CREATED BY",
+            "THIS APP HAS ENCOUNTERED AN ERROR",
+        )
+    )
+
+
 def classify_page_state(body: str, build_marker: str) -> str:
     """Classify visible app text so a generic HTTP-200 shell is not mistaken for a healthy app."""
     normalized = " ".join(str(body or "").split())
@@ -101,6 +115,7 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
             attempts = 0
             rendered_current_build = False
             consecutive_host_shell_only = 0
+            observed_page_states: list[str] = []
             # Streamlit Community Cloud can take time to rebuild after a Git push.
             # A single-page wait would stay on an old build forever even after the host
             # becomes current, so actively reload and poll until the expected version appears.
@@ -121,13 +136,30 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
                     elif response.status >= 400:
                         raise RuntimeError(f"The hosted app returned HTTP {response.status}.")
                     else:
-                        # Streamlit may still be waking/restarting. Capture current body
-                        # text on each navigation and continue polling if the build is old.
+                        # domcontentloaded only means the initial HTML arrived. Streamlit's
+                        # client can paint its real shell or app content afterwards. Wait a
+                        # bounded time for a recognizable marker before classifying a blank body.
+                        try:
+                            page.wait_for_function(
+                                """() => {
+                                    const text = (document.body?.innerText || '').toUpperCase();
+                                    return text.includes('QUALITY MOMENTUM LAB')
+                                        || text.includes('HOSTED WITH STREAMLIT')
+                                        || text.includes('CREATED BY')
+                                        || text.includes('THIS APP HAS ENCOUNTERED AN ERROR');
+                                }""",
+                                timeout=min(5_000, remaining_ms),
+                            )
+                        except PlaywrightTimeoutError:
+                            # Keep polling when the page is still blank during a restart.
+                            pass
                         try:
                             last_body_text = page.locator("body").inner_text(timeout=min(10_000, remaining_ms))
                         except Exception as body_exc:
                             last_body_text = f"<body text unavailable: {type(body_exc).__name__}: {body_exc}>"
                         state = classify_page_state(last_body_text, build_marker)
+                        observed_page_states.append(state)
+                        del observed_page_states[:-12]
                         visible_error = page.get_by_text("This app has encountered an error", exact=False)
                         if visible_error.count() > 0 and visible_error.first.is_visible():
                             # Let a later retry recover from a rebuild transition, but keep
@@ -184,6 +216,7 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
                 print(f"URL at failure: {page.url}", file=sys.stderr)
                 print(f"Page title: {page.title()!r}", file=sys.stderr)
                 print(f"Top-level HTTP status: {response_status}", file=sys.stderr)
+                print(f"Observed page states (most recent first): {list(reversed(observed_page_states))}", file=sys.stderr)
                 print("Visible page text (first 12,000 chars):", file=sys.stderr)
                 print((body_text or last_body_text)[:12_000], file=sys.stderr)
                 for key, values in diagnostics.items():
