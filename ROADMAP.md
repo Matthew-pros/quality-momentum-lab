@@ -62,8 +62,10 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [ ] Získat nebo nezávisle ověřit úplný, licencovaný point-in-time security master včetně delistovaných titulů, symbolických změn a historických změn složení; uživatelský CSV import sám o sobě úplnost nedokazuje.
 - [x] Rozložit náklady na komisi, polovinu bid/ask spreadu a skluz v bps na hrubý zobchodovaný objem, včetně modelových prodejních nákladů při stop výstupu.
 - [ ] Nahradit hrubý cost proxy realistickým modelem exekuce: přesné open/close fill, likvidita/market impact, fixní poplatky, FX, dividendy a corporate actions.
-- [x] Přidat expanding-window walk-forward: v každém foldu volit parametry pouze z minulých výnosů a reportovat jen vítěznou konfiguraci v neprolínajícím se OOS období. Každé OOS okno začíná s hotovostí a na konci účtuje modelovou likvidaci; nejde o nepřerušený broker účet.
-- [ ] Rozšířit walk-forward o skutečný kontinuální přenos pozic mezi foldech, širší sadu předem registrovaných modelů a následně další benchmarky napříč regiony a režimové expozice.
+- [x] Přidat expanding-window walk-forward: v každém foldu volit parametry pouze z minulých výnosů a reportovat jen vítěznou konfiguraci v neprolínajícím se OOS období.
+- [x] Přidat dvě jasně označené OOS účetní varianty: oddělené flat-start foldy s likvidací na hranicích a průběžný účet, který přenáší holdings, váhy, datum vstupu a ATR trailing high-water state; v průběžné variantě se konečná likvidace účtuje pouze jednou na konci celé OOS křivky.
+- [x] Validovat seedovaný portfolio state (tickery, váhy ≤ 100 % NAV, stop high-water a data vstupu) a testovat kontinuitu equity, absence překrývajících se OOS návratností i jedinou koncovou likvidaci.
+- [ ] Rozšířit walk-forward o širší sadu předem registrovaných modelů a následně další benchmarky napříč regiony a režimové expozice; žádná varianta zatím nepředstavuje broker-executable účet.
 - [ ] Prokázat, že chybějící/delistované výnosy nezkreslují výsledek; aktuální seznam tickerů stále vytváří survivorship bias.
 
 **Brána fáze:** výsledek musí být reprodukovatelný, s náklady, bez look-ahead bias a s benchmarkem; používání aktuálního tickerového seznamu stále znamená survivorship bias.
@@ -96,7 +98,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Ověřit současnou sadu regresních, integračních a UI smoke testů v Pythonu 3.12 i 3.14; na commitu `02064ccc` prošlo 95 testů při 82,44% coverage v obou verzích.
 - [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
 - [ ] Ověřit poslední nasazený build a reálný log Streamlit Cloud; GitHub Actions testuje kód, nikoli úspěšné sestavení/serving na platformě Streamlit.
-- [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
+- [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout na licencované, point-in-time historii; syntetické demo ani současný survivor universe nejsou důkazem investiční výhody.
 - [x] Reportovat nejistotu pořadí měsíčních výnosů pomocí moving-block bootstrapu společně s volatilitou, drawdownem, obratem, benchmarkem a expozicemi.
 - [ ] Odhadnout statistickou významnost výhody při vícenásobném testování parametrů (deflated Sharpe / reality-check přístup) až s dostatečným bias-free datasetem.
 - [ ] Dokumentovat licence zdrojů, limity pokrytí, reprodukční postup a povinné varování veřejného UI.
