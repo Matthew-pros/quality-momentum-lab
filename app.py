@@ -1189,6 +1189,12 @@ with tab_valuation:
             upside = (dcf_result["Implied value per share"] / quote_price - 1) * 100 if quote_price > 0 else np.nan
             c1.metric("Odchylka vůči ceně", "—" if not np.isfinite(upside) else f"{upside:+.1f}%")
             d.metric("Terminální hodnota / PV", f"{dcf_result['Terminal value share %']:.1f}%")
+            if dcf_result["Terminal value share %"] >= 80:
+                st.warning(
+                    f"Terminální hodnota tvoří {dcf_result['Terminal value share %']:.1f}% celkové modelové equity value. "
+                    "Výsledek je proto mimořádně citlivý na náklady kapitálu a terminální růst. "
+                    "Neber samotné číslo ani implied upside jako cenový cíl bez kontroly citlivostní tabulky."
+                )
             details = pd.DataFrame([
                 {"Položka": "PV explicitního FCF", "Hodnota": dcf_result["PV forecast FCF"]},
                 {"Položka": "PV terminální hodnoty", "Hodnota": dcf_result["PV terminal value"]},
