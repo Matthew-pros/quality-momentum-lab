@@ -954,6 +954,14 @@ def run_monthly_backtest(
                 drifted_weights[ticker] = (
                     new_weights.get(ticker, 0.0) * (1 + ticker_returns[ticker]) / (1 + net_return)
                 )
+        # Fees reduce NAV while the marked holdings initially retain their gross value.
+        # Keep the carried holdings state unlevered by normalizing any fee-induced
+        # >100% notional back to NAV; this is a conservative weight-accounting proxy,
+        # not a separate simulated order fill.
+        carried_gross_weight = sum(drifted_weights.values())
+        if carried_gross_weight > 1.0:
+            scale_to_nav = 1.0 / carried_gross_weight
+            drifted_weights = {ticker: weight * scale_to_nav for ticker, weight in drifted_weights.items()}
         effective_exposure = sum(drifted_weights.values()) * 100
         sic_group_weights: dict[str, float] = {}
         for ticker, weight in drifted_weights.items():
