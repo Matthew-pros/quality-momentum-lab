@@ -1042,6 +1042,11 @@ with tab_strategy:
         avg_days = metrics["Average holding days (closed positions)"]
         k.metric("Průměrná doba držení", "—" if pd.isna(avg_days) else f"{avg_days:.0f} dní")
         l.metric("Denní stop výstupy", str(int(curve["Stops triggered"].sum())))
+        st.caption(
+            f"Modelované transakční náklady: ${metrics['Total transaction costs USD']:,.2f} "
+            f"({metrics['Total transaction costs %']:.2f}% počátečního kapitálu). "
+            "Běžná equity curve nezahrnuje koncovou likvidaci otevřených pozic; walk-forward ji účtuje explicitně."
+        )
         equity_fig = go.Figure()
         equity_fig.add_trace(go.Scatter(x=curve.index,y=curve["Equity"],name="Strategie",line=dict(width=2.5,color="#72e0c1")))
         if "Benchmark equity" in curve:
@@ -1093,6 +1098,8 @@ with tab_strategy:
             "Sharpe (rf=0)": st.column_config.NumberColumn(format="%.2f"),
             "Max drawdown": st.column_config.NumberColumn(format="percent"),
             "Final equity": st.column_config.NumberColumn(format="$%.2f"),
+            "Total modelled cost (USD)": st.column_config.NumberColumn(format="$%.2f"),
+            "Total modelled cost (% of initial NAV)": st.column_config.NumberColumn(format="%.2f%%"),
         })
         sensitivity_fig = px.line(sensitivity, x="Cost (bps)", y="CAGR", markers=True,
             title="CAGR při různých nákladech", template="plotly_dark")
