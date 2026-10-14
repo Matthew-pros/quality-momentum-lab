@@ -2006,3 +2006,26 @@ def test_backtest_rejects_invalid_strategy_parameters(kwargs, match):
 
     with pytest.raises(ValueError, match=match):
         run_monthly_backtest(synthetic_prices(400), use_fundamentals=False, **kwargs)
+
+
+def test_backtest_rejects_non_finite_atr_stop_multiple():
+    from qlab.strategy import run_monthly_backtest
+
+    with pytest.raises(ValueError, match="stop_atr_multiple must be finite and positive"):
+        run_monthly_backtest(
+            synthetic_prices(400),
+            use_fundamentals=False,
+            stop_mode="ATR trailing stop",
+            stop_atr_multiple=np.inf,
+        )
+
+
+def test_cost_sensitivity_rejects_scenario_that_drives_nav_to_zero():
+    from qlab.strategy import cost_sensitivity
+
+    curve = pd.DataFrame({
+        "Gross return": [0.0],
+        "Gross turnover": [1.0],
+    }, index=pd.to_datetime(["2024-01-31"]))
+    with pytest.raises(ValueError, match="causes a monthly return at or below -100%"):
+        cost_sensitivity(curve, initial=10_000, cost_scenarios_bps=(10_000,))
