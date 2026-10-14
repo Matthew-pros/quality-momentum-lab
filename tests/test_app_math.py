@@ -1959,3 +1959,28 @@ def test_backtest_validates_seeded_state_weights_and_tickers():
             prices, use_fundamentals=False, initial_holdings={"AAA", "BBB"},
             initial_weights={"AAA": 0.7, "BBB": 0.4}, stop_mode="No stop / month-end rebalancing",
         )
+
+
+def test_cost_sensitivity_rejects_missing_returns_turnover_and_invalid_cost_assumptions():
+    from qlab.strategy import cost_sensitivity
+
+    curve = pd.DataFrame({
+        "Gross return": [0.02, 0.01],
+        "Gross turnover": [0.2, 0.3],
+    }, index=pd.date_range("2024-01-31", periods=2, freq="ME"))
+    missing_return = curve.copy()
+    missing_return.iloc[0, missing_return.columns.get_loc("Gross return")] = np.nan
+    with pytest.raises(ValueError, match="Gross returns must be finite and complete"):
+        cost_sensitivity(missing_return)
+
+    missing_turnover = curve.copy()
+    missing_turnover.iloc[0, missing_turnover.columns.get_loc("Gross turnover")] = np.nan
+    with pytest.raises(ValueError, match="Gross turnover must be finite, complete"):
+        cost_sensitivity(missing_turnover)
+
+    with pytest.raises(ValueError, match="Initial equity"):
+        cost_sensitivity(curve, initial=0)
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        cost_sensitivity(curve, cost_scenarios_bps=(0, np.inf))
+    with pytest.raises(ValueError, match="At least one"):
+        cost_sensitivity(curve, cost_scenarios_bps=())
