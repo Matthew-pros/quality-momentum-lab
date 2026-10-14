@@ -11,9 +11,6 @@ import argparse
 import sys
 from urllib.parse import urlparse
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
 
 EXPECTED_MARKER = "QUALITY MOMENTUM LAB"
 EXPECTED_SCREENER_HEADING = "Screener a podkladové metriky"
@@ -35,6 +32,14 @@ def validate_app_url(value: str) -> str:
 
 def run_smoke(url: str, timeout_ms: int = 120_000) -> None:
     base_url = validate_app_url(url)
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "Playwright is required for the hosted browser smoke check; install it with 'pip install playwright' "
+            "and run 'python -m playwright install chromium'."
+        ) from exc
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         try:
