@@ -768,6 +768,7 @@ def run_monthly_backtest(
     if start_cutoff is not None and end_cutoff is not None and start_cutoff > end_cutoff:
         raise ValueError("evaluation_start_date must be on or before evaluation_end_date.")
 
+    start_idx = 12  # match the 12-month burn-in used by run_monthly_backtest
     if not np.isfinite(float(initial)) or float(initial) <= 0:
         raise ValueError("Initial equity must be a positive finite value.")
     previous_holdings = {str(t).strip().upper() for t in (initial_holdings or set()) if str(t).strip()}
@@ -815,7 +816,6 @@ def run_monthly_backtest(
     total_entry_events = 0
     total_exit_events = 0
     # First usable decision requires at least 252 trading days of history in the daily indicators.
-    start_idx = 12
     for i in range(start_idx, len(monthly) - 1):
         decision_date = monthly.index[i]
         if start_cutoff is not None and decision_date < start_cutoff:
