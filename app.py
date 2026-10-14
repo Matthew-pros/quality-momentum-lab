@@ -16,6 +16,7 @@ import streamlit as st
 from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
+from qlab.review import compare_screener_snapshots
 from qlab.tax_lots import fifo_ledger
 from qlab.universe import parse_universe_membership, tickers_in_membership_file, universe_members_asof
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -589,7 +590,65 @@ with tab_screener:
         "Momentum 6-1M": st.column_config.NumberColumn(format="percent"), "ATR20%": st.column_config.NumberColumn(format="%.2f%"),
         "ADX14": st.column_config.NumberColumn(format="%.1f"),
     })
-    st.download_button("Stáhnout kompletní screener CSV", shown.to_csv(index=False).encode("utf-8"), "quality_momentum_screener.csv", "text/csv")
+    st.download_button(
+        "Stáhnout úplný snapshot screeneru CSV",
+        screener.to_csv(index=False).encode("utf-8"),
+        "quality_momentum_screener_snapshot.csv", "text/csv",
+        help="Exportuje všechny aktuální řádky screeneru, nezávisle na právě zvolených filtrech. Tento soubor lze nahrát při další týdenní kontrole."
+    )
+    st.download_button(
+        "Stáhnout pouze filtrovaný výřez CSV",
+        shown.to_csv(index=False).encode("utf-8"),
+        "quality_momentum_screener_filtered.csv", "text/csv"
+    )
+    st.divider()
+    st.markdown("#### Týdenní kontrola materiálních změn")
+    st.caption("Nahraj předchozí úplný snapshot screeneru. Aplikace porovná skóre, momentum, trend, 50denní minimum, signál a datum posledního výkazu. Výsledek je kontrolní fronta, nikoli automatický pokyn k obchodu.")
+    previous_snapshot_upload = st.file_uploader(
+        "Předchozí snapshot screeneru CSV",
+        type=["csv"], key="previous_screener_snapshot"
+    )
+    score_change_threshold = st.slider(
+        "Materiální změna composite score (body)", 1.0, 20.0, 7.0, 1.0,
+        key="snapshot_score_threshold"
+    )
+    momentum_change_threshold = st.slider(
+        "Materiální změna 12–1M momentum (procentní body)", 5, 50, 10, 5,
+        key="snapshot_momentum_threshold"
+    ) / 100
+    if previous_snapshot_upload is not None:
+        try:
+            previous_snapshot = pd.read_csv(io.BytesIO(previous_snapshot_upload.getvalue()))
+            review_queue = compare_screener_snapshots(
+                screener, previous_snapshot,
+                score_change_points=score_change_threshold,
+                momentum_change=momentum_change_threshold,
+            )
+            exit_reviews = int(review_queue["Review action"].eq("EXIT REVIEW — thesis/technical break").sum())
+            material_reviews = int(review_queue["Material change"].fillna(False).astype(bool).sum())
+            new_symbols = int(review_queue["Review action"].eq("NEW — review").sum())
+            a,b,d = st.columns(3)
+            a.metric("Exit review", str(exit_reviews))
+            b.metric("Materiální změny", str(material_reviews))
+            d.metric("Nové tickery", str(new_symbols))
+            show_material_only = st.checkbox("Zobrazit pouze materiální změny", value=True, key="snapshot_material_only")
+            review_display = review_queue.loc[review_queue["Material change"]] if show_material_only else review_queue
+            st.dataframe(review_display, width="stretch", hide_index=True, column_config={
+                "Current score": st.column_config.NumberColumn(format="%.1f"),
+                "Previous score": st.column_config.NumberColumn(format="%.1f"),
+                "Score change": st.column_config.NumberColumn(format="%.1f"),
+                "Current 12-1M": st.column_config.NumberColumn(format="percent"),
+                "Previous 12-1M": st.column_config.NumberColumn(format="percent"),
+                "12-1M change": st.column_config.NumberColumn(format="percent"),
+            })
+            st.download_button(
+                "Stáhnout týdenní review queue CSV",
+                review_queue.to_csv(index=False).encode("utf-8"),
+                "screener_material_change_review.csv", "text/csv"
+            )
+            st.info("EXIT REVIEW znamená lidskou kontrolu porušení technických pravidel; aplikace akcii automaticky neprodává. Před porovnáním ověř stejný zdroj cen, měnu, univerzum a dobu načtení.")
+        except Exception as exc:
+            st.error(f"Porovnání snapshotů selhalo: {type(exc).__name__}: {exc}")
     st.divider()
     selected_ticker = st.selectbox("Detail akcie", screener["Ticker"].tolist())
     if selected_ticker in prices:
