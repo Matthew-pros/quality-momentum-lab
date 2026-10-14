@@ -1448,3 +1448,29 @@ def test_snapshot_review_rejects_duplicate_tickers_and_bad_thresholds():
     good = pd.DataFrame([{"Ticker":"AAA","Composite score":50}])
     with pytest.raises(ValueError, match="score_change_points"):
         compare_screener_snapshots(good, good, score_change_points=-1)
+
+
+def test_fifo_rejects_missing_or_infinite_numeric_inputs():
+    from qlab.tax_lots import fifo_ledger
+
+    for field, value in [("Quantity", np.nan), ("Price", np.inf), ("Fees", -np.inf)]:
+        tx = pd.DataFrame([{
+            "Date":"2024-01-01","Ticker":"AAA","Type":"BUY",
+            "Quantity":10,"Price":100,"Fees":0,"Currency":"USD",
+        }])
+        tx.loc[0, field] = value
+        with pytest.raises(ValueError, match="finite numbers"):
+            fifo_ledger(tx)
+
+
+def test_fifo_never_assumes_usd_when_currency_is_missing():
+    from qlab.tax_lots import fifo_ledger
+
+    tx = pd.DataFrame([
+        {"Date":"2020-01-01","Ticker":"AAA","Type":"BUY","Quantity":10,"Price":100,"Fees":0},
+        {"Date":"2024-02-01","Ticker":"AAA","Type":"SELL","Quantity":10,"Price":200,"Fees":0},
+    ])
+    realized, _, _ = fifo_ledger(tx)
+    assert realized.iloc[0]["Currency"] == "UNKNOWN"
+    assert "convert proceeds to CZK" in realized.iloc[0]["Tax review status"]
+    assert "Potential value-test exemption" not in realized.iloc[0]["Tax review status"]
