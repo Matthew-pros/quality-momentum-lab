@@ -58,9 +58,9 @@ def test_public_smoke_marker_polling_script_has_bounded_timeout():
 @pytest.mark.parametrize(
     ("body", "build_marker", "expected_state"),
     [
-        ("QUALITY MOMENTUM LAB\\nResearch console · build 2.8.0", "build 2.8.0", "current_build"),
-        ("QUALITY MOMENTUM LAB\\nResearch console · build 2.7.9", "build 2.8.0", "stale_build"),
-        ("Hosted with Streamlit\\nCreated by matthew-pros", "build 2.8.0", "host_shell_only"),
+        ("QUALITY MOMENTUM LAB\nResearch console · build 2.8.0", "build 2.8.0", "current_build"),
+        ("QUALITY MOMENTUM LAB\nResearch console · build 2.7.9", "build 2.8.0", "stale_build"),
+        ("Hosted with Streamlit\nCreated by matthew-pros", "build 2.8.0", "host_shell_only"),
         ("This app has encountered an error. Contact support.", "build 2.8.0", "application_error"),
         ("", "build 2.8.0", "empty"),
         ("Unrelated generic page", "build 2.8.0", "unknown"),
