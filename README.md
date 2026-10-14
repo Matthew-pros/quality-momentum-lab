@@ -135,6 +135,6 @@ ruff check app.py qlab tests --select F821,F822,F823
 pytest -q --cov=qlab --cov-report=term-missing:skip-covered
 ```
 
-GitHub Actions compiles the application and modules, checks undefined Python names, reports coverage and runs regression, data-adapter, portfolio, tax-lot, DCF, walk-forward and offline Streamlit UI smoke tests on Python 3.12 and 3.14. A separate `pip-audit` job checks runtime dependencies for published vulnerabilities. Coverage XML is retained as a short-lived Actions artifact; it is reported but there is no blanket coverage threshold yet because not all provider-only and live deployment branches can be tested offline.
+GitHub Actions compiles the application and modules, checks undefined Python names, reports coverage and runs regression, data-adapter, portfolio, tax-lot, DCF, walk-forward and offline Streamlit UI smoke tests on Python 3.12 and 3.14. A separate `pip-audit` job checks runtime dependencies for published vulnerabilities. Coverage XML is retained as a short-lived Actions artifact, and the `qlab` calculation/data package must maintain at least 80% line coverage in both runtime matrices. Live provider-only and Streamlit-host deployment behavior still needs a separate live smoke check.
 
 See [ROADMAP.md](ROADMAP.md) for production readiness gates.
