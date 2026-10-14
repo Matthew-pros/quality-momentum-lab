@@ -37,9 +37,9 @@ jobs:
       - name: Install application and quality dependencies
         run: python -m pip install --upgrade pip -r requirements.txt -r requirements-dev.txt
       - name: Compile application
-        run: python -m compileall -q app.py qlab tests
+        run: python -m compileall -q app.py qlab tests .github/scripts
       - name: Check for undefined Python names
-        run: ruff check app.py qlab tests --select F821,F822,F823
+        run: ruff check app.py qlab tests .github/scripts --select F821,F822,F823
       - name: Run regression, integration, and Streamlit smoke tests
         run: python -m pytest -q --cov=qlab --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml --cov-fail-under=80
       - name: Upload coverage report
