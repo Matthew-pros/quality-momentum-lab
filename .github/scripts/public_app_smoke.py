@@ -45,6 +45,10 @@ def expected_build_marker() -> str:
     raise RuntimeError("Could not determine APP_VERSION from the checked-out app.py.")
 
 
+def host_shell_retry_exhausted(consecutive_attempts: int) -> bool:
+    """Return whether repeated generic host-shell responses should fail the smoke check."""
+    return consecutive_attempts >= HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS
+
 
 def classify_page_state(body: str, build_marker: str) -> str:
     """Classify visible app text so a generic HTTP-200 shell is not mistaken for a healthy app."""
@@ -135,7 +139,7 @@ def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_00
                             break
                         elif state == "host_shell_only":
                             consecutive_host_shell_only += 1
-                            if consecutive_host_shell_only >= HOST_SHELL_MAX_CONSECUTIVE_ATTEMPTS:
+                            if host_shell_retry_exhausted(consecutive_host_shell_only):
                                 raise RuntimeError(
                                     f"Public host returned HTTP {response_status} but served only the generic "
                                     f"Streamlit shell for {consecutive_host_shell_only} consecutive reload attempts. "
