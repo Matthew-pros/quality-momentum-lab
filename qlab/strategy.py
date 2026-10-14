@@ -1539,7 +1539,7 @@ def expanding_walk_forward(
     fold_rows: list[dict[str, object]] = []
     oos_segments: list[pd.DataFrame] = []
     continuous_state: dict = {}
-    continuous_equity = base_initial if "base_initial" in locals() else float(backtest_kwargs.get("initial", 10_000))
+    continuous_equity = 0.0  # Initialized to base_initial after shared backtest kwargs are validated.
     fold_number = 0
     for test_start_idx in range(start_idx + train_months, len(monthly)):
         if (test_start_idx - (start_idx + train_months)) % step_months != 0:
