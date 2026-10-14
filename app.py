@@ -21,7 +21,7 @@ from qlab.tax_lots import fifo_ledger
 from qlab.universe import parse_universe_membership, tickers_in_membership_file, universe_members_asof
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
 DEFAULT_DEMO_UNIVERSE = "SIM01,SIM02,SIM03,SIM04,SIM05,SIM06,SIM07,SIM08,SIM09,SIM10,SIM11,SIM12"
 BENCHMARKS = ("SPY",)
