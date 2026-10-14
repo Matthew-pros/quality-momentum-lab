@@ -1,5 +1,5 @@
-streamlit>=1.54,<2  # st.button/download_button width='stretch' needs the newer width API
-pandas>=2.2,<4
-numpy>=1.26,<3
+streamlit>=1.65.0,<2  # st.button/download_button width='stretch' needs the newer width API
+pandas>=3.0.6,<4
+numpy>=2.5.4,<3
 plotly>=7.1.0,<8
 requests>=2.31,<3
