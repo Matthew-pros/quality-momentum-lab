@@ -9,6 +9,7 @@ from datetime import date
 import hashlib
 import time
 from typing import Any
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -404,6 +405,165 @@ def download_market_data(
             round(float(frame["Close"].isna().mean() * 100), 2), "",
         ]
     return assess_price_quality(prices, report)
+
+
+def load_tiingo_market_data(
+    tickers: str | list[str],
+    token: str,
+    period: str = "10y",
+    now=None,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Fetch Tiingo EOD prices using the current user's own API token.
+
+    This integration intentionally does not cache or persist the token and does not
+    share price responses across users. Users must comply with Tiingo's own-account
+    and developer-program requirements. Currency is UNKNOWN unless confirmed by the
+    user because the EOD price payload does not provide a dependable quote currency
+    field for every instrument.
+    """
+    symbols = normalize_tickers(tickers)
+    report_columns = [
+        "Ticker", "Currency", "Source", "Status", "Rows", "First date", "Last date",
+        "Missing %", "Message",
+    ]
+    if not token or not str(token).strip():
+        raise ValueError("A Tiingo API token is required when Tiingo EOD is selected.")
+    if not symbols:
+        return {}, pd.DataFrame(columns=report_columns)
+
+    end = pd.Timestamp(now if now is not None else pd.Timestamp.now()).normalize()
+    period_years = {"5y": 5, "10y": 10}
+    if str(period).lower() in period_years:
+        start = end - pd.DateOffset(years=period_years[str(period).lower()])
+    elif str(period).lower() == "max":
+        start = pd.Timestamp("1900-01-01")
+    else:
+        raise ValueError(f"Unsupported Tiingo history period: {period}")
+
+    token_value = str(token).strip()
+    headers = {
+        "Authorization": f"Token {token_value}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    prices: dict[str, pd.DataFrame] = {}
+    report_rows: list[dict[str, Any]] = []
+    auth_failed = False
+
+    for idx, ticker in enumerate(symbols):
+        if idx:
+            time.sleep(0.08)
+        message = ""
+        try:
+            url = f"https://api.tiingo.com/tiingo/daily/{quote(ticker, safe='.-')}/prices"
+            params = {
+                "startDate": start.date().isoformat(),
+                "endDate": end.date().isoformat(),
+            }
+            response = None
+            last_error = None
+            for attempt in range(4):
+                try:
+                    response = requests.get(url, headers=headers, params=params, timeout=30)
+                    if response.status_code in (401, 403):
+                        auth_failed = True
+                        response.raise_for_status()
+                    if response.status_code == 429 or 500 <= response.status_code < 600:
+                        if attempt < 3:
+                            retry_after = response.headers.get("Retry-After", "")
+                            try:
+                                wait = min(8.0, max(0.5, float(retry_after)))
+                            except (TypeError, ValueError):
+                                wait = min(8.0, 0.5 * (2 ** attempt))
+                            time.sleep(wait)
+                            continue
+                    response.raise_for_status()
+                    break
+                except requests.RequestException as exc:
+                    last_error = exc
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status in (401, 403):
+                        auth_failed = True
+                        break
+                    if attempt >= 3:
+                        break
+                    time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+            if response is None or last_error is not None and (
+                getattr(getattr(last_error, "response", None), "status_code", None) in (401, 403)
+                or response.status_code >= 400
+            ):
+                if last_error:
+                    raise last_error
+            if response is None:
+                raise RuntimeError("Tiingo returned no response.")
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, list) or not payload:
+                raise ValueError("Tiingo returned no daily price observations for this ticker/date range.")
+
+            frame = pd.DataFrame(payload)
+            mapping = {
+                "date":"Date", "open":"Open", "high":"High", "low":"Low", "close":"Close",
+                "volume":"Volume", "adjOpen":"Adj Open", "adjHigh":"Adj High",
+                "adjLow":"Adj Low", "adjClose":"Adj Close", "adjVolume":"Adj Volume",
+                "divCash":"Dividend", "splitFactor":"Split factor",
+            }
+            frame = frame.rename(columns=mapping)
+            if "Date" not in frame or "Close" not in frame:
+                raise ValueError("Tiingo response is missing required Date/Close fields.")
+            frame["Date"] = pd.to_datetime(frame["Date"], errors="coerce", utc=True).dt.tz_localize(None)
+            frame = frame.loc[frame["Date"].notna()].set_index("Date").sort_index()
+            numeric_columns = [
+                "Open", "High", "Low", "Close", "Volume",
+                "Adj Open", "Adj High", "Adj Low", "Adj Close", "Adj Volume",
+                "Dividend", "Split factor",
+            ]
+            for column in numeric_columns:
+                if column in frame:
+                    frame[column] = pd.to_numeric(frame[column], errors="coerce")
+            required_price = {"Open", "High", "Low", "Close"}
+            if not required_price.issubset(frame.columns):
+                raise ValueError(
+                    "Tiingo response does not include complete OHLC fields: "
+                    + ", ".join(sorted(required_price - set(frame.columns)))
+                )
+            frame["Currency"] = "UNKNOWN"
+            frame.attrs["currency"] = "UNKNOWN"
+            prices[ticker] = frame
+            usable = pd.to_numeric(frame["Close"], errors="coerce").notna()
+            report_rows.append({
+                "Ticker": ticker, "Currency":"UNKNOWN", "Source":"Tiingo EOD (user token)",
+                "Status":"OK" if usable.any() else "MISSING", "Rows":int(usable.sum()),
+                "First date":frame.index.min().date().isoformat() if usable.any() else "",
+                "Last date":frame.index[usable].max().date().isoformat() if usable.any() else "",
+                "Missing %":round(float(100*(1-usable.mean())),2) if len(frame) else 100.0,
+                "Message":"Quote currency not inferred from the EOD payload; user confirmation required.",
+            })
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            message = f"{type(exc).__name__}: provider request failed"
+            if status:
+                message += f" (HTTP {status})"
+            report_rows.append({
+                "Ticker":ticker, "Currency":"UNKNOWN", "Source":"Tiingo EOD (user token)",
+                "Status":"MISSING", "Rows":0, "First date":"", "Last date":"",
+                "Missing %":100.0,
+                "Message":"Authentication failed; remaining provider requests stopped." if auth_failed else message,
+            })
+            if auth_failed:
+                remaining = symbols[idx + 1:]
+                for missing_ticker in remaining:
+                    report_rows.append({
+                        "Ticker":missing_ticker, "Currency":"UNKNOWN", "Source":"Tiingo EOD (user token)",
+                        "Status":"MISSING", "Rows":0, "First date":"", "Last date":"",
+                        "Missing %":100.0, "Message":"Not requested because Tiingo authentication failed.",
+                    })
+                break
+
+    report = pd.DataFrame(report_rows, columns=report_columns)
+    if prices:
+        prices, report = assess_price_quality(prices, report, now=end)
+    return prices, report
 
 
 def load_ohlcv_csv(
