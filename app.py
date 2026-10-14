@@ -814,10 +814,16 @@ with tab_strategy:
         key="train_select_holdout_button", disabled=not currency_ok,
         help="Porovná 9 variant min-score × hystereze pouze na prvních 60 % výnosové historie; na posledních 40 % ukáže pouze výsledky vítěze zvoleného tréninkovým Sharpe. Nejde o rolling walk-forward."
     )
+    wf_continuous_portfolio = st.checkbox(
+        "Walk-forward: přenášet portfolio mezi OOS okny",
+        value=True,
+        key="wf_continuous_portfolio",
+        help="Zapnuto: otevřené pozice, váhy a ATR trailing high-water marks pokračují mezi neprolínajícími se OOS okny; modelová likvidace nákladů proběhne až na úplném konci. Parametry se i nadále vybírají výhradně z tréninkových dat. Vypnuto: samostatné flat-start epizody s likvidací na konci každého okna."
+    )
     walk_forward_button = st.button(
         "Spustit expanding walk-forward",
         key="expanding_walk_forward_button", disabled=not currency_ok,
-        help="V každém foldu vybere min-score a hysterezi jen z minulých dat, potom otestuje vítěze na neprolínajícím se šestíměsíčním OOS okně. Portfolio se na začátku každého OOS okna resetuje na hotovost a na konci se modelově zlikviduje."
+        help="V každém foldu vybere min-score a hysterezi jen z minulých dat, potom otestuje vítěze na neprolínajícím se šestíměsíčním OOS okně."
     )
     saved = st.session_state.get("backtest_result")
     if run_backtest:
@@ -964,9 +970,11 @@ with tab_strategy:
                         max_sector_positions=max_sector_positions if max_sector_positions > 0 else None,
                         commission_bps=commission_bps, half_spread_bps=half_spread_bps,
                         slippage_bps=slippage_bps, universe_history=universe_history,
+                        continuous_portfolio=wf_continuous_portfolio,
                     )
                 st.session_state["expanding_walk_forward"] = {
-                    "signature": signature, "folds": folds, "candidates": candidate_table,
+                    "signature": signature, "continuous_portfolio": wf_continuous_portfolio,
+                    "folds": folds, "candidates": candidate_table,
                     "curve": oos_curve, "metrics": wf_metrics, "error": None,
                 }
             except Exception as exc:
