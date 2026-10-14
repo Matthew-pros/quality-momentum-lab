@@ -1,4 +1,4 @@
-# Quality Momentum Lab — research app v2.6.0
+# Quality Momentum Lab — research app v2.6.1
 
 A Streamlit research environment for screening equities, reviewing price and fundamental data, testing monthly momentum rules, sizing positions with ATR, and reconciling FIFO tax lots.
 
