@@ -25,17 +25,23 @@ def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
     else:
         out["Fees"] = 0.0
     if "Currency" not in out:
-        out["Currency"] = "USD"
+        # Never infer a currency silently: UNKNOWN allows bookkeeping but blocks
+        # currency-specific tax review and mixed-currency matching.
+        out["Currency"] = "UNKNOWN"
     else:
-        out["Currency"] = out["Currency"].fillna("USD").astype(str).str.upper()
+        out["Currency"] = out["Currency"].fillna("UNKNOWN").astype(str).str.strip().str.upper()
+        out.loc[out["Currency"].isin(["", "NAN", "NONE"]), "Currency"] = "UNKNOWN"
     out["_source_order"] = np.arange(len(out), dtype=int)
     if out["Date"].isna().any():
         raise ValueError("One or more transaction dates could not be parsed.")
     if not out["Type"].isin(["BUY", "SELL"]).all():
         raise ValueError("Transaction Type must be BUY or SELL.")
+    numeric = out[["Quantity", "Price", "Fees"]].to_numpy(dtype=float)
+    if not np.isfinite(numeric).all():
+        raise ValueError("Quantity, price, and fees must all be finite numbers (no blanks, NaN, or infinity).")
     if (out["Quantity"] <= 0).any() or (out["Price"] < 0).any() or (out["Fees"] < 0).any():
         raise ValueError("Quantity must be > 0; price and fees cannot be negative.")
-    if out["Ticker"].eq("").any():
+    if out["Ticker"].eq("").any() or out["Ticker"].str.lower().isin({"nan", "none"}).any():
         raise ValueError("Ticker cannot be empty.")
     out = out.sort_values(["Date", "_source_order"], kind="mergesort").reset_index(drop=True)
     out["Transaction ID"] = np.arange(1, len(out) + 1, dtype=int)
