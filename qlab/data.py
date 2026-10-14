@@ -465,10 +465,11 @@ def load_tiingo_market_data(
             for attempt in range(4):
                 try:
                     response = requests.get(url, headers=headers, params=params, timeout=30)
-                    if response.status_code in (401, 403):
+                    status_code = int(response.status_code)
+                    if status_code in (401, 403):
                         auth_failed = True
                         response.raise_for_status()
-                    if response.status_code == 429 or 500 <= response.status_code < 600:
+                    if status_code == 429 or 500 <= status_code < 600:
                         if attempt < 3:
                             retry_after = response.headers.get("Retry-After", "")
                             try:
@@ -478,6 +479,7 @@ def load_tiingo_market_data(
                             time.sleep(wait)
                             continue
                     response.raise_for_status()
+                    last_error = None
                     break
                 except requests.RequestException as exc:
                     last_error = exc
@@ -485,17 +487,21 @@ def load_tiingo_market_data(
                     if status in (401, 403):
                         auth_failed = True
                         break
+                    # A permanent 4xx for one ticker is not helped by retrying it,
+                    # except 429 which was handled above as rate limiting.
+                    if status is not None and 400 <= status < 500 and status != 429:
+                        break
                     if attempt >= 3:
                         break
                     time.sleep(min(8.0, 0.5 * (2 ** attempt)))
-            if response is None or last_error is not None and (
-                getattr(getattr(last_error, "response", None), "status_code", None) in (401, 403)
-                or response.status_code >= 400
-            ):
+            if response is None:
                 if last_error:
                     raise last_error
-            if response is None:
                 raise RuntimeError("Tiingo returned no response.")
+            if last_error is not None or response.status_code >= 400:
+                if last_error:
+                    raise last_error
+                response.raise_for_status()
             response.raise_for_status()
             payload = response.json()
             if not isinstance(payload, list) or not payload:
