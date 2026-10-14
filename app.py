@@ -1406,8 +1406,8 @@ with tab_data:
     if price_provider.startswith("Tiingo"):
         st.info(
             "Tiingo ceny načítáš vlastním tokenem. Export raw/adjustované cenové historie je v této veřejné aplikaci vypnutý, "
-            "aby výchozí workflow data hromadně nepřerozděloval. Respektuj osobní/komerční podmínky svého účtu; "
-            "vývojářský režim vyžaduje vlastní token uživatele a jasné uvedení zdroje."
+            "aby výchozí workflow data hromadně nepřerozděloval. Respektuj podmínky svého účtu; vývojářský režim předpokládá "
+            "vlastní token uživatele a žádné sdílení cenové historie s ostatními uživateli."
         )
         st.caption("Data sourced by Tiingo · [EOD API documentation](https://www.tiingo.com/documentation/end-of-day) · [Developer Program](https://www.tiingo.com/documentation/appendix/developers)")
     else:
