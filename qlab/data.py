@@ -988,8 +988,11 @@ def sec_snapshot_to_history(
             known = price_series.loc[price_series.index <= ts].dropna()
             if not known.empty:
                 latest_price = float(known.iloc[-1])
+        # If a filing landed exactly on the previous decision date, that
+        # snapshot conservatively excluded it. Recalculate at the next decision
+        # date so the previously withheld filing becomes available from then on.
         has_new_filing = prior_calculated_date is None or any(
-            prior_calculated_date < filed < cutoff for filed in filing_dates
+            prior_calculated_date <= filed < cutoff for filed in filing_dates
         )
         if last_snapshot is None or has_new_filing:
             last_snapshot = sec_fundamental_snapshot(
