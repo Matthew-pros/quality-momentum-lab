@@ -1824,7 +1824,7 @@ def calculate_position_sizes(
                 "Ticker": ticker,
                 "Price": price if np.isfinite(price) and price > 0 else np.nan,
                 "ATR20": atr if np.isfinite(atr) and atr > 0 else np.nan,
-                "Stop distance": np.nan,
+                "Stop distance": 0.0,
                 "Provisional stop": np.nan,
                 "Shares (risk-sized, capped)": 0,
                 "Position value": 0.0,
