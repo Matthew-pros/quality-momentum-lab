@@ -412,6 +412,14 @@ def test_cost_sensitivity_keeps_signals_fixed_and_higher_cost_lowers_terminal_eq
     assert table.loc[table["Cost (bps)"] == 0, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0]
     assert table.loc[table["Cost (bps)"] == 15, "Final equity"].iloc[0] > table.loc[table["Cost (bps)"] == 50, "Final equity"].iloc[0]
     assert table["Average monthly turnover %"].nunique() == 1
+    assert table["Total modelled cost (USD)"].is_monotonic_increasing
+    assert table["Total modelled cost (% of initial NAV)"].is_monotonic_increasing
+    middle = table.loc[table["Cost (bps)"] == 15].iloc[0]
+    monthly_cost_rates = curve["Gross turnover"].to_numpy() * 15 / 10_000
+    net = curve["Gross return"].to_numpy() - monthly_cost_rates
+    equity_before = np.r_[10_000.0, 10_000.0 * np.cumprod(1 + net)[:-1]]
+    assert middle["Total modelled cost (USD)"] == pytest.approx(float((equity_before * monthly_cost_rates).sum()))
+
 
 
 def test_daily_atr_trailing_stop_uses_gap_open_and_returns_exit_reason():
@@ -1082,6 +1090,7 @@ def test_terminal_liquidation_cost_uses_end_nav_and_trades_remaining_exposure():
         "Gross turnover": [0.20],
         "Gross exposure %": [80.0],
         "Estimated cost (bps of portfolio)": [0.0],
+        "Transaction cost value": [0.0],
     }, index=pd.to_datetime(["2025-01-31"]))
     out = _apply_terminal_liquidation_cost(curve, initial=1_000.0, cost_bps=10.0)
     expected_cash_cost = 1_100.0 * 0.80 * 10 / 10_000
@@ -1089,6 +1098,8 @@ def test_terminal_liquidation_cost_uses_end_nav_and_trades_remaining_exposure():
     assert out.iloc[0]["Net return"] == pytest.approx((1_100.0 - expected_cash_cost) / 1_000.0 - 1)
     assert out.iloc[0]["Terminal liquidation cost"] == pytest.approx(expected_cash_cost / 1_000.0)
     assert out.iloc[0]["Terminal liquidation turnover"] == pytest.approx(0.80 * 1_100.0 / 1_000.0)
+    assert out.iloc[0]["Terminal liquidation cost value"] == pytest.approx(expected_cash_cost)
+    assert out.iloc[0]["Transaction cost value"] == pytest.approx(expected_cash_cost)
     assert out.iloc[0]["Gross turnover"] == pytest.approx(0.20 + 0.80 * 1_100.0 / 1_000.0)
 
 
