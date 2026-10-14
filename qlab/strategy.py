@@ -1735,6 +1735,26 @@ def expanding_walk_forward(
         oos = _apply_terminal_liquidation_cost(oos, base_initial, cost_bps)
         oos_returns = pd.to_numeric(oos["Net return"], errors="coerce")
         oos["Equity"] = base_initial * (1 + oos_returns).cumprod()
+        # Update the last fold diagnostics after charging the one true final liquidation.
+        # Earlier fold metrics are unchanged because no artificial fold-end sale occurs.
+        final_fold_id = int(fold_rows[-1]["Fold"])
+        final_fold_curve = oos.loc[oos["Fold"].eq(final_fold_id)]
+        final_fold_returns = pd.to_numeric(final_fold_curve["Net return"], errors="coerce")
+        final_fold_factor = float(np.prod(1 + final_fold_returns.to_numpy()))
+        final_fold_vol = float(final_fold_returns.std(ddof=1) * np.sqrt(12)) if len(final_fold_returns) > 1 else np.nan
+        final_fold_sharpe = (
+            float(final_fold_returns.mean() * 12 / final_fold_vol)
+            if np.isfinite(final_fold_vol) and final_fold_vol > 0 else np.nan
+        )
+        final_fold_wealth = np.r_[1.0, np.cumprod(1 + final_fold_returns.to_numpy())]
+        final_fold_drawdown = final_fold_wealth[1:] / np.maximum.accumulate(final_fold_wealth)[1:] - 1
+        fold_rows[-1].update({
+            "OOS CAGR": float(final_fold_factor ** (12 / len(final_fold_returns)) - 1) if len(final_fold_returns) and final_fold_factor > 0 else np.nan,
+            "OOS Sharpe": final_fold_sharpe,
+            "OOS max drawdown": float(np.min(final_fold_drawdown)),
+            "OOS turnover %": float(pd.to_numeric(final_fold_curve["Gross turnover"], errors="coerce").mean() * 100),
+            "Terminal liquidation turnover %": float(pd.to_numeric(pd.Series([oos.iloc[-1].get("Terminal liquidation turnover", 0)]), errors="coerce").fillna(0).iloc[0] * 100),
+        })
     benchmark_series = pd.to_numeric(oos.get("Benchmark return", pd.Series(index=oos.index, dtype=float)), errors="coerce")
     if benchmark_series.notna().any():
         oos["Benchmark equity"] = base_initial * (1 + benchmark_series.fillna(0)).cumprod()
