@@ -1121,17 +1121,26 @@ def cost_sensitivity(
     """Reprice the same audited signal path under alternative transaction-cost assumptions."""
     if curve is None or curve.empty:
         return pd.DataFrame()
+    if not np.isfinite(float(initial)) or float(initial) <= 0:
+        raise ValueError("Initial equity must be a positive finite value.")
     required = {"Gross return", "Gross turnover"}
     if not required.issubset(curve.columns):
         raise ValueError(f"Backtest curve must include: {', '.join(sorted(required))}")
-    gross = pd.to_numeric(curve["Gross return"], errors="coerce").fillna(0.0)
-    turnover = pd.to_numeric(curve["Gross turnover"], errors="coerce").fillna(0.0).clip(lower=0)
+    gross = pd.to_numeric(curve["Gross return"], errors="coerce")
+    turnover = pd.to_numeric(curve["Gross turnover"], errors="coerce")
+    if gross.isna().any() or (~np.isfinite(gross)).any():
+        raise ValueError("Gross returns must be finite and complete; missing returns may not be replaced with zero.")
+    if turnover.isna().any() or (~np.isfinite(turnover)).any() or (turnover < 0).any():
+        raise ValueError("Gross turnover must be finite, complete and non-negative.")
+    scenarios = tuple(float(value) for value in cost_scenarios_bps)
+    if not scenarios:
+        raise ValueError("At least one transaction-cost scenario is required.")
+    if any(not np.isfinite(value) or value < 0 for value in scenarios):
+        raise ValueError("Transaction costs must be finite and non-negative.")
     rows = []
     months = len(curve)
     years = months / 12.0
-    for bps in cost_scenarios_bps:
-        if float(bps) < 0:
-            raise ValueError("Transaction costs cannot be negative.")
+    for bps in sorted(set(scenarios)):
         estimated_cost = turnover * float(bps) / 10_000
         net = gross - estimated_cost
         equity_before = float(initial) * (1 + net).cumprod().shift(1).fillna(float(initial))
