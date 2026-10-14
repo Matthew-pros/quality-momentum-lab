@@ -72,6 +72,7 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 - [x] Přidat FIFO evidence nákupů/prodejů s rozdělením poplatků, realizovaným výsledkem a otevřenými loty.
 - [x] Přidat předběžné daňové kontrolní štítky pro české osvobození: roční hodnotový test do 100 000 Kč; 40milionový strop časového testu pouze pro rok 2025; odstranění tohoto stropu pro cenné papíry od roku 2026; kontrola potenciální oznamovací hranice 5 mil. Kč po zdrojovém prodejním řádku.
 - [x] FIFO odmítá párování nákupního lotu a prodeje v různých měnách bez FX konverze a souhrnná KPI nesčítají P/L v různých měnách.
+- [x] FIFO odmítá NaN/nekonečné hodnoty a chybějící měnu nikdy tiše nepřekládá na USD; neznámou měnu zachovává jako UNKNOWN a blokuje z ní závěry o CZK osvobození.
 - [ ] Pro daňové účely doplnit FX do CZK, všechny prodeje a ostatní osvobozené příjmy za rok včetně kryptoaktiv (zejména pro rok 2025), corporate actions, dědictví a výjimky (např. obchodní majetek); současný modul je pouze orientační a není finálním výpočtem daně.
 - [x] Přidat omezení počtu pozic podle současné hrubé SEC SIC skupiny, report skupinové expozice, počty vstupů/výstupů, průměrnou dobu držení a nákladové komponenty.
 - [x] Přidat portfolio-level souhrnný risk budget do ATR sizing kalkulátoru a škálovat celé kusy pod cap.
@@ -85,11 +86,13 @@ Reprodukovatelná veřejná výzkumná aplikace pro screening akcií a testován
 
 - [x] Přidat automatické regresní testy indikátorů, chybějících skóre, chronologie a FIFO lotů.
 - [x] Přidat CI smoke test kompletního Streamlit UI proti simulovaným cenovým datům bez živého cenového API.
+- [x] Přidat týdenní snapshot review: export úplného screeneru a porovnání minulého snapshotu, prahů skóre/momenta, trendu, 50denního low, signálů a filing date s exportovatelnou frontou pro lidskou kontrolu.
 - [ ] Ověřit poslední nasazený build, stavy všech GitHub Actions a reálný log Streamlit Cloud.
 - [ ] Spustit parametrickou citlivost, walk-forward a zcela nedotčený holdout.
 - [x] Reportovat nejistotu pořadí měsíčních výnosů pomocí moving-block bootstrapu společně s volatilitou, drawdownem, obratem, benchmarkem a expozicemi.
 - [ ] Odhadnout statistickou významnost výhody při vícenásobném testování parametrů (deflated Sharpe / reality-check přístup) až s dostatečným bias-free datasetem.
 - [ ] Dokumentovat licence zdrojů, limity pokrytí, reprodukční postup a povinné varování veřejného UI.
+- [x] Dokumentovat snapshot review workflow; uživatel exportuje minulý CSV snapshot a v dalším týdnu jej ručně nahraje. Bez persistentního úložiště se historie mezi návštěvami automaticky neukládá.
 
 **Podmínka release 1.0:** žádné tvrzení o strategické výhodě bez out-of-sample důkazu; žádné automatické obchodní pokyny; jasné oddělení zdrojových dat, skóre, simulace a osobního rozhodnutí.
 
