@@ -40,7 +40,7 @@ jobs:
         run: python -m pytest -q --cov=qlab --cov-report=term-missing:skip-covered --cov-report=xml:coverage.xml
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-python-${{ matrix.python-version }}
           path: coverage.xml
