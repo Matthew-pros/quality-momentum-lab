@@ -617,8 +617,12 @@ def _simulate_position_month(
             not np.isfinite(adjusted_bar_close) or adjusted_bar_close <= 0
             or not np.isfinite(adjusted_bar_open) or adjusted_bar_open <= 0
             or not np.isfinite(adjusted_bar_low) or adjusted_bar_low <= 0
+            or not np.isfinite(adjusted_bar_high) or adjusted_bar_high <= 0
         ):
-            continue
+            # A daily stop simulation may not silently skip a missing OHLC bar:
+            # the unavailable intraday range could have crossed the stop, and skipping
+            # it would systematically bias the backtest in favour of holding winners.
+            return np.nan, "MISSING", pd.Timestamp(dt).date().isoformat(), np.nan
 
         levels: list[tuple[str, float]] = []
         if stop_mode in {"ATR trailing stop", "ATR + daily 50-day low"} and np.isfinite(prior_atr) and prior_atr > 0:
