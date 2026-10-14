@@ -1553,3 +1553,46 @@ def test_dcf_rejects_economically_invalid_terminal_discount_and_growth_inputs():
         calculate_fcfe_dcf(100.0, -1.0, 0.10, 0.02)
     with pytest.raises(ValueError, match="Forecast horizon must be an integer"):
         calculate_fcfe_dcf(100.0, 0.05, 0.10, 0.02, years=5.5)
+
+
+def test_sec_annual_series_backfills_history_across_alternative_xbrl_tags():
+    from qlab.data import _annual_series
+
+    facts = {"facts":{"us-gaap":{
+        # Preferred tag starts later in the issuer's reporting history.
+        "RevenueFromContractWithCustomerExcludingAssessedTax":{"units":{"USD":[
+            {"start":"2022-01-01","end":"2022-12-31","val":150,"filed":"2023-02-15","form":"10-K"},
+        ]}},
+        "Revenues":{"units":{"USD":[
+            {"start":"2021-01-01","end":"2021-12-31","val":100,"filed":"2022-02-15","form":"10-K"},
+        ]}},
+    }}}
+    values = _annual_series(
+        facts,
+        ["RevenueFromContractWithCustomerExcludingAssessedTax","Revenues"],
+        cutoff="2023-06-30",
+    )
+    assert len(values) == 2
+    assert values.iloc[0] == 100
+    assert values.iloc[1] == 150
+    assert values.attrs["unit"] == "USD"
+
+
+def test_sec_alternative_tag_backfill_still_excludes_facts_not_filed_by_cutoff():
+    from qlab.data import _annual_series
+
+    facts = {"facts":{"us-gaap":{
+        "RevenueFromContractWithCustomerExcludingAssessedTax":{"units":{"USD":[
+            {"start":"2022-01-01","end":"2022-12-31","val":150,"filed":"2023-07-15","form":"10-K"},
+        ]}},
+        "Revenues":{"units":{"USD":[
+            {"start":"2021-01-01","end":"2021-12-31","val":100,"filed":"2022-02-15","form":"10-K"},
+        ]}},
+    }}}
+    values = _annual_series(
+        facts,
+        ["RevenueFromContractWithCustomerExcludingAssessedTax","Revenues"],
+        cutoff="2023-06-30",
+    )
+    assert len(values) == 1
+    assert values.iloc[0] == 100
