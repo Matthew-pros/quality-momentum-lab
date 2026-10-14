@@ -950,6 +950,8 @@ def run_monthly_backtest(
         transaction_cost = turnover * effective_cost_bps / 10_000
         stop_transaction_cost = stop_turnover * effective_cost_bps / 10_000
         net_return = gross_return - transaction_cost
+        equity_before_period = equity
+        transaction_cost_value = equity_before_period * transaction_cost
         equity *= (1 + net_return)
         survivors = [ticker for ticker in selected if ticker not in stopped]
         drifted_weights: dict[str, float] = {}
@@ -978,6 +980,8 @@ def run_monthly_backtest(
             "Gross return": gross_return,
             "Transaction cost": transaction_cost,
             "Net return": net_return,
+            "Equity before return": equity_before_period,
+            "Transaction cost value": transaction_cost_value,
             "Equity": equity,
             "Holdings": ", ".join(selected),
             "Number of holdings": len(selected),
@@ -1053,7 +1057,8 @@ def run_monthly_backtest(
         "Max drawdown": float(np.min(drawdown)),
         "Final equity": float(curve["Equity"].iloc[-1]),
         "Months": number_of_months,
-        "Total transaction costs %": float(curve["Transaction cost"].sum() * 100),
+        "Total transaction costs USD": float(curve["Transaction cost value"].sum()),
+        "Total transaction costs %": float(curve["Transaction cost value"].sum() / float(initial) * 100),
         "Average monthly turnover %": float(curve["Gross turnover"].mean() * 100),
         "Average gross exposure %": float(curve["Gross exposure %"].mean()),
         "Entry events": int(total_entry_events),
@@ -1129,6 +1134,8 @@ def cost_sensitivity(
             raise ValueError("Transaction costs cannot be negative.")
         estimated_cost = turnover * float(bps) / 10_000
         net = gross - estimated_cost
+        equity_before = float(initial) * (1 + net).cumprod().shift(1).fillna(float(initial))
+        cost_value = estimated_cost * equity_before
         equity = float(initial) * (1 + net).cumprod()
         final_equity = float(equity.iloc[-1])
         cagr = (final_equity / float(initial)) ** (1 / years) - 1 if years > 0 and final_equity > 0 else np.nan
@@ -1144,7 +1151,8 @@ def cost_sensitivity(
             "Sharpe (rf=0)": sharpe,
             "Max drawdown": float(np.min(drawdown)),
             "Final equity": final_equity,
-            "Total modelled cost (% of starting equity sum)": float(estimated_cost.sum() * 100),
+            "Total modelled cost (USD)": float(cost_value.sum()),
+            "Total modelled cost (% of initial NAV)": float(cost_value.sum() / float(initial) * 100),
             "Average monthly turnover %": float(turnover.mean() * 100),
         })
     return pd.DataFrame(rows)
