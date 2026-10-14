@@ -430,11 +430,18 @@ def load_ohlcv_csv(
             f"Missing: {', '.join(sorted(missing))}"
         )
     raw["Date"] = pd.to_datetime(raw["Date"], errors="coerce")
-    raw["Ticker"] = raw["Ticker"].astype(str).str.upper().str.strip()
+    # Use nullable string dtype and check missingness before uppercasing; Pandas 3.x
+    # preserves NA in astype(str), so a blank ticker must not be detected by stringifying it.
+    ticker_text = raw["Ticker"].astype("string").str.strip()
+    ticker_missing = (
+        ticker_text.isna()
+        | ticker_text.str.lower().isin({"", "nan", "none", "null", "<na>"})
+    )
     if raw["Date"].isna().any():
         raise ValueError("CSV contains one or more unparseable Date values.")
-    if raw["Ticker"].eq("").any() or raw["Ticker"].str.lower().isin({"nan", "none", "null"}).any():
+    if ticker_missing.any():
         raise ValueError("CSV contains an empty or missing Ticker value.")
+    raw["Ticker"] = ticker_text.str.upper()
     for column in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
         if column in raw:
             raw[column] = pd.to_numeric(raw[column], errors="coerce")
