@@ -1596,3 +1596,16 @@ def test_sec_alternative_tag_backfill_still_excludes_facts_not_filed_by_cutoff()
     )
     assert len(values) == 1
     assert values.iloc[0] == 100
+
+
+def test_fifo_date_only_as_of_includes_transactions_later_on_the_same_calendar_day():
+    from qlab.tax_lots import fifo_ledger
+
+    tx = pd.DataFrame([
+        {"Date":"2024-01-01 10:00:00","Ticker":"AAA","Type":"BUY","Quantity":2.0,"Price":100.0,"Fees":0.0,"Currency":"USD"},
+        {"Date":"2024-01-10 15:00:00","Ticker":"AAA","Type":"SELL","Quantity":2.0,"Price":120.0,"Fees":0.0,"Currency":"USD"},
+    ])
+    realized, open_lots, _ = fifo_ledger(tx, as_of="2024-01-10")
+    assert len(realized) == 1
+    assert open_lots.empty
+    assert realized.iloc[0]["Sale date"] == pd.Timestamp("2024-01-10 15:00:00")
