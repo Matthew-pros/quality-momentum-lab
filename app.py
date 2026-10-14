@@ -13,7 +13,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, parse_quote_currency_map, apply_quote_currency_map, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis
+from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, parse_quote_currency_map, apply_quote_currency_map, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis, currency_validation_universe
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.review import compare_screener_snapshots
@@ -436,8 +436,11 @@ currency_by_ticker = {
     ticker: str(frame.attrs.get("currency", "UNKNOWN")).strip().upper() or "UNKNOWN"
     for ticker, frame in price_data_all.items()
 }
+currency_check_tickers = currency_validation_universe(
+    universe, benchmark_ticker, list(price_data_all)
+)
 currency_status = validate_usd_price_basis(
-    symbols, currency_by_ticker,
+    currency_check_tickers, currency_by_ticker,
     confirm_unknown_usd=currency_confirm_usd,
     missing_tickers=missing_investable_tickers,
 )
