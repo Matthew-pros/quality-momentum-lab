@@ -51,8 +51,17 @@ def normalize_transactions(frame: pd.DataFrame) -> pd.DataFrame:
 def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Return realized trade matches, open lots, and annual realized P/L summaries in source currency."""
     tx = normalize_transactions(frame)
+    as_of_day = None
     if as_of is not None:
-        tx = tx.loc[tx["Date"] <= pd.Timestamp(as_of)]
+        cutoff = pd.Timestamp(as_of)
+        if cutoff.tzinfo is not None:
+            cutoff = cutoff.tz_localize(None)
+        if cutoff == cutoff.normalize():
+            # Date-only cutoff means end of that calendar day, not midnight at its start.
+            as_of_day = cutoff.normalize()
+            tx = tx.loc[tx["Date"].dt.normalize() <= as_of_day]
+        else:
+            tx = tx.loc[tx["Date"] <= cutoff]
     lots = defaultdict(deque)
     realized = []
     for txrow in tx.to_dict("records"):
@@ -116,7 +125,11 @@ def fifo_ledger(frame: pd.DataFrame, as_of=None) -> tuple[pd.DataFrame, pd.DataF
         for lot in queue:
             if lot["Remaining quantity"] > 1e-9:
                 row = dict(lot)
-                row["Holding days"] = (pd.Timestamp(as_of or tx["Date"].max()) - row["Acquisition date"]).days
+                holding_date = as_of_day if as_of_day is not None else pd.Timestamp(as_of or tx["Date"].max())
+                if as_of_day is not None:
+                    row["Holding days"] = int((holding_date - pd.Timestamp(row["Acquisition date"]).normalize()).days)
+                else:
+                    row["Holding days"] = (holding_date - row["Acquisition date"]).days
                 row["Cost basis remaining"] = row["Remaining quantity"] * row["Unit cost incl. fee"]
                 open_rows.append(row)
     realized_df = pd.DataFrame(realized)
