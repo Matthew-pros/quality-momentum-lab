@@ -1,4 +1,4 @@
-"""Public Streamlit deployment smoke check with useful failure diagnostics.
+"""Public Streamlit deployment smoke check with deployment-aware polling and diagnostics.
 
 The check is intentionally separate from unit tests: it verifies the public hosted UI,
 but does not submit forms, upload private data, or authenticate to any provider.
@@ -6,13 +6,14 @@ but does not submit forms, upload private data, or authenticate to any provider.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 
 EXPECTED_MARKER = "QUALITY MOMENTUM LAB"
-EXPECTED_BUILD_MARKER = "build 2.7.0"
 EXPECTED_SCREENER_HEADING = "Screener a podkladové metriky"
 
 
@@ -30,8 +31,22 @@ def validate_app_url(value: str) -> str:
     return url
 
 
-def run_smoke(url: str, timeout_ms: int = 180_000) -> None:
+def expected_build_marker() -> str:
+    """Read the build marker from the same checked-out app that CI is validating."""
+    app_file = Path("app.py")
+    if app_file.exists():
+        source = app_file.read_text(encoding="utf-8")
+        match = re.search(r'^APP_VERSION\s*=\s*["\']([^"\']+)["\']', source, re.MULTILINE)
+        if match:
+            return f"build {match.group(1)}"
+    raise RuntimeError("Could not determine APP_VERSION from the checked-out app.py.")
+
+
+def run_smoke(url: str, timeout_ms: int = 360_000, poll_interval_ms: int = 15_000) -> None:
     base_url = validate_app_url(url)
+    build_marker = expected_build_marker()
+    if timeout_ms < 30_000 or poll_interval_ms < 1_000:
+        raise ValueError("Use timeout_ms >= 30000 and poll_interval_ms >= 1000.")
     try:
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
         from playwright.sync_api import sync_playwright
@@ -46,34 +61,79 @@ def run_smoke(url: str, timeout_ms: int = 180_000) -> None:
         browser = playwright.chromium.launch()
         page = None
         response_status = None
+        last_body_text = ""
         screenshot_path = Path("artifacts/public-app-smoke-failure.png")
         try:
             page = browser.new_page(viewport={"width": 1440, "height": 1000})
-            page.set_default_timeout(timeout_ms)
+            page.set_default_timeout(min(30_000, timeout_ms))
             page.on("console", lambda message: diagnostics["console_errors"].append(message.text) if message.type == "error" else None)
             page.on("pageerror", lambda error: diagnostics["page_errors"].append(str(error)))
             page.on("requestfailed", lambda request: diagnostics["failed_requests"].append(
                 f"{request.method} {request.url} :: {request.failure}"
             ))
-            response = page.goto(base_url, wait_until="domcontentloaded", timeout=timeout_ms)
-            if response is None:
-                raise RuntimeError("The hosted app returned no top-level HTTP response.")
-            response_status = response.status
-            if response.status >= 400:
-                raise RuntimeError(f"The hosted app returned HTTP {response.status}.")
 
-            page.get_by_text(EXPECTED_MARKER, exact=False).first.wait_for(state="visible", timeout=timeout_ms)
-            page.get_by_text(EXPECTED_BUILD_MARKER, exact=False).first.wait_for(state="visible", timeout=timeout_ms)
+            deadline = time.monotonic() + timeout_ms / 1000
+            attempts = 0
+            rendered_current_build = False
+            # Streamlit Community Cloud can take time to rebuild after a Git push.
+            # A single-page wait would stay on an old build forever even after the host
+            # becomes current, so actively reload and poll until the expected version appears.
+            while time.monotonic() < deadline:
+                attempts += 1
+                remaining_ms = max(1_000, int((deadline - time.monotonic()) * 1000))
+                try:
+                    response = page.goto(
+                        base_url,
+                        wait_until="domcontentloaded",
+                        timeout=min(45_000, remaining_ms),
+                    )
+                    if response is None:
+                        raise RuntimeError("The hosted app returned no top-level HTTP response.")
+                    response_status = response.status
+                    if response.status >= 500:
+                        last_body_text = f"Host returned HTTP {response.status}."
+                    elif response.status >= 400:
+                        raise RuntimeError(f"The hosted app returned HTTP {response.status}.")
+                    else:
+                        # Streamlit may still be waking/restarting. Capture current body
+                        # text on each navigation and continue polling if the build is old.
+                        try:
+                            last_body_text = page.locator("body").inner_text(timeout=min(10_000, remaining_ms))
+                        except Exception as body_exc:
+                            last_body_text = f"<body text unavailable: {type(body_exc).__name__}: {body_exc}>"
+                        is_current = (
+                            EXPECTED_MARKER in last_body_text.upper()
+                            and build_marker.lower() in last_body_text.lower()
+                        )
+                        visible_error = page.get_by_text("This app has encountered an error", exact=False)
+                        if visible_error.count() > 0 and visible_error.first.is_visible():
+                            # Let a later retry recover from a rebuild transition, but keep
+                            # the visible error in the final diagnostics if it persists.
+                            last_body_text = "STREAMLIT APPLICATION ERROR\n" + last_body_text
+                        elif is_current:
+                            rendered_current_build = True
+                            break
+                except PlaywrightTimeoutError as nav_exc:
+                    diagnostics["failed_requests"].append(f"navigation attempt {attempts}: {nav_exc}")
+                if time.monotonic() >= deadline:
+                    break
+                page.wait_for_timeout(min(poll_interval_ms, max(1_000, int((deadline - time.monotonic()) * 1000))))
+
+            if not rendered_current_build:
+                raise PlaywrightTimeoutError(
+                    f"Expected public build marker {build_marker!r} was not rendered after {attempts} reload attempts."
+                )
+
+            page.set_default_timeout(min(45_000, max(10_000, int((deadline - time.monotonic()) * 1000))))
             page.get_by_role("tab", name="Screener").click()
-            page.get_by_text(EXPECTED_SCREENER_HEADING, exact=True).wait_for(state="visible", timeout=timeout_ms)
+            page.get_by_text(EXPECTED_SCREENER_HEADING, exact=True).wait_for(state="visible", timeout=min(45_000, max(10_000, int((deadline - time.monotonic()) * 1000))))
 
             visible_error = page.get_by_text("This app has encountered an error", exact=False)
             if visible_error.count() > 0 and visible_error.first.is_visible():
                 raise RuntimeError("Streamlit displayed its application-error message.")
 
-            print(f"PASS: HTTP {response.status}; {EXPECTED_BUILD_MARKER}; public app shell and Screener tab rendered at {base_url}")
+            print(f"PASS: HTTP {response_status}; {build_marker}; public app shell and Screener tab rendered at {base_url}; reload attempts={attempts}")
         except Exception as exc:
-            # Preserve exact browser diagnostics rather than returning only a generic timeout.
             if page is not None:
                 screenshot_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -85,20 +145,16 @@ def run_smoke(url: str, timeout_ms: int = 180_000) -> None:
                     body_text = page.locator("body").inner_text(timeout=10_000)
                 except Exception as body_exc:
                     body_text = f"<body text unavailable: {type(body_exc).__name__}: {body_exc}>"
+                print(f"Expected build marker: {build_marker}", file=sys.stderr)
                 print(f"URL at failure: {page.url}", file=sys.stderr)
                 print(f"Page title: {page.title()!r}", file=sys.stderr)
                 print(f"Top-level HTTP status: {response_status}", file=sys.stderr)
                 print("Visible page text (first 12,000 chars):", file=sys.stderr)
-                print(body_text[:12_000], file=sys.stderr)
+                print((body_text or last_body_text)[:12_000], file=sys.stderr)
                 for key, values in diagnostics.items():
                     print(f"{key} ({len(values)}):", file=sys.stderr)
                     for value in values[-20:]:
                         print(f"  {value[:2000]}", file=sys.stderr)
-            if isinstance(exc, PlaywrightTimeoutError):
-                raise RuntimeError(
-                    f"Public deployment did not render the expected build/tab within {timeout_ms} ms. "
-                    "See page text, browser errors, failed requests and the uploaded screenshot artifact."
-                ) from exc
             raise
         finally:
             browser.close()
@@ -107,10 +163,11 @@ def run_smoke(url: str, timeout_ms: int = 180_000) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", required=True, help="Public Streamlit app URL")
-    parser.add_argument("--timeout-ms", type=int, default=180_000)
+    parser.add_argument("--timeout-ms", type=int, default=360_000)
+    parser.add_argument("--poll-interval-ms", type=int, default=15_000)
     args = parser.parse_args()
     try:
-        run_smoke(args.url, timeout_ms=args.timeout_ms)
+        run_smoke(args.url, timeout_ms=args.timeout_ms, poll_interval_ms=args.poll_interval_ms)
     except Exception as exc:
         print(f"FAIL: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
