@@ -1609,3 +1609,42 @@ def test_fifo_date_only_as_of_includes_transactions_later_on_the_same_calendar_d
     assert len(realized) == 1
     assert open_lots.empty
     assert realized.iloc[0]["Sale date"] == pd.Timestamp("2024-01-10 15:00:00")
+
+
+def test_adjusted_ohlc_stop_uses_same_price_scale_as_adjusted_atr():
+    from qlab.strategy import calculate_indicators, _simulate_position_month
+
+    index = pd.bdate_range("2024-01-01", periods=360)
+    raw_close = pd.Series(100.0, index=index)
+    factor = pd.Series(0.5, index=index)
+    frame = pd.DataFrame({
+        "Open": raw_close,
+        "High": raw_close + 0.5,
+        "Low": raw_close - 0.5,
+        "Close": raw_close,
+        "Adj Open": (raw_close * factor),
+        "Adj High": (raw_close + 0.5) * factor,
+        "Adj Low": (raw_close - 0.5) * factor,
+        "Adj Close": raw_close * factor,
+        "Volume": 100_000,
+    }, index=index)
+    signal_date = index[320]
+    # A regular session with raw prices near 100 and adjusted prices near 50.
+    # Its adjusted low stays well above the adjusted ATR trailing stop. Comparing
+    # raw Low (~99.5) to an adjusted stop (~48.75) would be an inconsistent scale.
+    stop_test_date = index[321]
+    indicators = calculate_indicators(frame)
+    prior_atr = float(indicators.loc[signal_date, "ATR20"])
+    stored_high = float(frame.loc[:signal_date, "Adj High"].max())
+    expected_stop = stored_high - 3.0 * prior_atr
+    assert float(frame.loc[stop_test_date, "Adj Low"]) > expected_stop
+
+    ret, reason, exit_date, high_water = _simulate_position_month(
+        frame, indicators, signal_date, index[340],
+        stop_mode="ATR trailing stop", stop_atr_multiple=3.0,
+        prior_high_water=stored_high,
+    )
+    assert reason == "HOLD"
+    assert exit_date == ""
+    assert ret == pytest.approx(0.0)
+    assert high_water == pytest.approx(stored_high)
