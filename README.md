@@ -124,11 +124,17 @@ Optional: `Fees,Currency`
 
 Type is `BUY` or `SELL`; quantities are positive. Sales that exceed available FIFO inventory are rejected. Transactions are processed in their stated currency; the tool does not aggregate currencies into a common base currency. If `Currency` is omitted or blank, it remains `UNKNOWN` — the app does not silently assume USD, and CZK tax review cannot rely on an unknown-currency ledger. Numeric values must be finite; blanks/NaN/infinity are rejected.
 
-## Test suite
+## Test and quality suite
+
+For a local development environment, install both runtime and development dependencies:
 
 ```bash
-pip install pytest
-pytest -q
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m compileall -q app.py qlab tests
+ruff check app.py qlab tests --select F821,F822,F823
+pytest -q --cov=qlab --cov-report=term-missing:skip-covered
 ```
 
-GitHub Actions compiles the app/modules and runs the regression + offline Streamlit UI smoke tests on pushes and pull requests under Python 3.12 and 3.14. See [ROADMAP.md](ROADMAP.md) for production readiness gates.
+GitHub Actions compiles the application and modules, checks undefined Python names, reports coverage and runs regression, data-adapter, portfolio, tax-lot, DCF, walk-forward and offline Streamlit UI smoke tests on Python 3.12 and 3.14. A separate `pip-audit` job checks runtime dependencies for published vulnerabilities. Coverage XML is retained as a short-lived Actions artifact; it is reported but there is no blanket coverage threshold yet because not all provider-only and live deployment branches can be tested offline.
+
+See [ROADMAP.md](ROADMAP.md) for production readiness gates.
