@@ -1482,15 +1482,16 @@ def expanding_walk_forward(
     test_months: int = 6,
     step_months: int = 6,
     min_train_months: int = 18,
+    continuous_portfolio: bool = False,
     **backtest_kwargs,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float]]:
-    """Run an expanding-window walk-forward search with isolated, flat-start OOS episodes.
+    """Expanding-window walk-forward with train-only selection and two OOS accounting modes.
 
-    Each fold chooses min-score and hysteresis solely from past return history. The
-    selected configuration is then run on the following test segment with the portfolio
-    reset to cash; entry/rebalance/stop costs are applied, and any remaining end exposure
-    is liquidated with modelled costs. Fold test returns do not overlap. This yields a
-    conservative sequence of independent OOS episodes, not a broker-execution simulation.
+    Parameters are selected solely from past return history. With continuous_portfolio=False,
+    each non-overlapping OOS fold resets to cash and liquidates at its end. With
+    continuous_portfolio=True, holdings, weights, daily-stop high-water marks, and holding
+    entry dates carry into the next OOS fold; only the final combined OOS period is liquidated.
+    This remains a simplified daily/monthly-bar research simulation, not broker execution.
     """
     if not prices:
         raise ValueError("Price history is empty.")
@@ -1532,10 +1533,13 @@ def expanding_walk_forward(
 
     backtest_kwargs = _prepare_shared_backtest_kwargs(prices, dict(backtest_kwargs))
     base_initial = float(backtest_kwargs.get("initial", 10_000))
+    continuous_equity = base_initial
     start_idx = 12  # match the 12-month burn-in used by run_monthly_backtest
     fold_candidates: list[dict[str, object]] = []
     fold_rows: list[dict[str, object]] = []
     oos_segments: list[pd.DataFrame] = []
+    continuous_state: dict = {}
+    continuous_equity = base_initial if "base_initial" in locals() else float(backtest_kwargs.get("initial", 10_000))
     fold_number = 0
     for test_start_idx in range(start_idx + train_months, len(monthly)):
         if (test_start_idx - (start_idx + train_months)) % step_months != 0:
@@ -1640,6 +1644,14 @@ def expanding_walk_forward(
             "evaluation_start_date": test_start_decision,
             "evaluation_end_date": test_end_decision,
         })
+        if continuous_portfolio and fold_number > 1:
+            test_kwargs.update({
+                "initial": float(continuous_equity),
+                "initial_holdings": continuous_state["holdings"],
+                "initial_weights": continuous_state["weights"],
+                "initial_stop_high_water": continuous_state["stop_high_water"],
+                "initial_holding_entry_dates": continuous_state["holding_entry_dates"],
+            })
         test_curve, _, _ = run_monthly_backtest(prices=prices, **test_kwargs)
         expected_test_dates = monthly.index[test_start_idx + 1:test_start_idx + test_months + 1]
         if test_curve is None or len(test_curve) != test_months or not test_curve.index.equals(expected_test_dates):
@@ -1648,7 +1660,15 @@ def expanding_walk_forward(
                 f"Fold {fold_number} expected {test_months} non-overlapping OOS return months, "
                 f"but backtest returned {actual}."
             )
-        test_curve = _apply_terminal_liquidation_cost(test_curve, base_initial, cost_bps)
+        if continuous_portfolio:
+            # Carry the account NAV and open-position state into the next OOS fold.
+            # Do not force an artificial sale/re-entry at a validation boundary.
+            continuous_equity = float(test_curve["Equity"].iloc[-1])
+            continuous_state = dict(test_curve.attrs.get("end_state", {}))
+            if not continuous_state:
+                raise ValueError(f"Fold {fold_number} did not return the portfolio state required for continuous walk-forward.")
+        else:
+            test_curve = _apply_terminal_liquidation_cost(test_curve, base_initial, cost_bps)
         test_curve["Fold"] = fold_number
         test_curve["Selected min score"] = float(winner["Min score"])
         test_curve["Selected hysteresis"] = float(winner["Hysteresis"])
@@ -1684,7 +1704,11 @@ def expanding_walk_forward(
             "OOS Sharpe": float(test_sharpe) if np.isfinite(test_sharpe) else np.nan,
             "OOS max drawdown": float(np.min(drawdown)),
             "OOS turnover %": float(pd.to_numeric(test_curve["Gross turnover"], errors="coerce").mean() * 100),
-            "Terminal liquidation turnover %": float(test_curve["Terminal liquidation turnover"].iloc[-1] * 100),
+            "Terminal liquidation turnover %": (
+                0.0 if continuous_portfolio
+                else float(test_curve["Terminal liquidation turnover"].iloc[-1] * 100)
+            ),
+            "Portfolio continuity": "Continuous account" if continuous_portfolio else "Flat-start episode",
             "OOS benchmark CAGR": (
                 float(np.prod(1 + benchmark_good.to_numpy()) ** (12 / len(benchmark_good)) - 1)
                 if len(benchmark_good) and np.prod(1 + benchmark_good.to_numpy()) > 0 else np.nan
@@ -1700,8 +1724,17 @@ def expanding_walk_forward(
     oos = pd.concat(oos_segments).sort_index()
     if oos.index.duplicated().any():
         raise ValueError("Walk-forward generated overlapping OOS return dates; choose step_months >= test_months.")
+    # Rebuild one continuous NAV series from OOS returns. Independent episodes already
+    # include a liquidation-cost observation at every fold end; continuous mode charges
+    # only one terminal liquidation after all OOS folds are concatenated.
     oos_returns = pd.to_numeric(oos["Net return"], errors="coerce")
+    if oos_returns.isna().any() or (1 + oos_returns).le(0).any():
+        raise ValueError("Walk-forward OOS path contains invalid returns.")
     oos["Equity"] = base_initial * (1 + oos_returns).cumprod()
+    if continuous_portfolio:
+        oos = _apply_terminal_liquidation_cost(oos, base_initial, cost_bps)
+        oos_returns = pd.to_numeric(oos["Net return"], errors="coerce")
+        oos["Equity"] = base_initial * (1 + oos_returns).cumprod()
     benchmark_series = pd.to_numeric(oos.get("Benchmark return", pd.Series(index=oos.index, dtype=float)), errors="coerce")
     if benchmark_series.notna().any():
         oos["Benchmark equity"] = base_initial * (1 + benchmark_series.fillna(0)).cumprod()
@@ -1721,7 +1754,8 @@ def expanding_walk_forward(
         "OOS max drawdown": float(np.min(oos_drawdown)),
         "OOS final equity": float(oos["Equity"].iloc[-1]),
         "OOS average turnover %": float(pd.to_numeric(oos["Gross turnover"], errors="coerce").mean() * 100),
-        "Terminal liquidation cost % of starting equity sum": float(pd.to_numeric(oos["Terminal liquidation cost"], errors="coerce").fillna(0).sum() * 100),
+        "Terminal liquidation cost % of starting equity sum": float(pd.to_numeric(oos.get("Terminal liquidation cost", pd.Series(0, index=oos.index)), errors="coerce").fillna(0).sum() * 100),
+        "Portfolio continuity": "Continuous account" if continuous_portfolio else "Flat-start episodes",
     }
     bench_good = benchmark_series.dropna()
     if len(bench_good) and float(np.prod(1 + bench_good.to_numpy())) > 0:
