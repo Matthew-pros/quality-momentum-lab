@@ -1896,6 +1896,8 @@ def test_continuous_walk_forward_carries_portfolio_and_liquidates_only_at_final_
     assert not any("OOS" in column for column in candidates.columns)
     assert len(oos) == int(folds["OOS months"].sum())
     assert oos.index.is_monotonic_increasing and not oos.index.duplicated().any()
+    assert pd.to_numeric(oos["Gross exposure %"], errors="coerce").max() <= 100.0 + 1e-8
+    assert folds["Terminal liquidation turnover %"].iloc[:-1].eq(0).all()
     terminal_turnover = pd.to_numeric(oos["Terminal liquidation turnover"], errors="coerce").fillna(0)
     assert terminal_turnover.iloc[:-1].eq(0).all()
     assert np.allclose(oos["Equity"], 10_000 * (1 + oos["Net return"]).cumprod())
