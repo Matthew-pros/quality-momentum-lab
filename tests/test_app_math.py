@@ -1984,3 +1984,25 @@ def test_cost_sensitivity_rejects_missing_returns_turnover_and_invalid_cost_assu
         cost_sensitivity(curve, cost_scenarios_bps=(0, np.inf))
     with pytest.raises(ValueError, match="At least one"):
         cost_sensitivity(curve, cost_scenarios_bps=())
+
+
+@pytest.mark.parametrize(
+    "kwargs, match",
+    [
+        ({"top_n": 0}, "top_n must be a positive integer"),
+        ({"min_score": 101}, "min_score must be finite"),
+        ({"min_adx": -1}, "min_adx must be finite"),
+        ({"hysteresis": np.inf}, "hysteresis must be finite"),
+        ({"max_replacements": -1}, "max_replacements must be a non-negative integer"),
+        ({"weighting_method": "kelly"}, "weighting_method must be"),
+        ({"max_position_weight": 0}, "max_position_weight must be finite"),
+        ({"require_breakout": "60-day"}, "require_breakout must be"),
+        ({"max_sector_positions": 0}, "max_sector_positions must be"),
+        ({"cost_bps": np.nan}, "cost_bps must be finite"),
+    ],
+)
+def test_backtest_rejects_invalid_strategy_parameters(kwargs, match):
+    from qlab.strategy import run_monthly_backtest
+
+    with pytest.raises(ValueError, match=match):
+        run_monthly_backtest(synthetic_prices(400), use_fundamentals=False, **kwargs)
