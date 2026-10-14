@@ -1,0 +1,46 @@
+name: Public deployment smoke check
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: Public Streamlit Community Cloud URL (HTTPS *.streamlit.app only)
+        required: true
+        default: https://quality-momentum-lab-d48ep9tlvdzdufjr23z4wq.streamlit.app
+        type: string
+  schedule:
+    # Weekly runtime check; this is not triggered on every push because hosted redeploys can lag.
+    - cron: "30 8 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-deployment-smoke
+  cancel-in-progress: false
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install browser smoke dependency
+        run: python -m pip install --upgrade pip playwright
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Check public deployment
+        env:
+          MANUAL_APP_URL: ${{ inputs.app_url }}
+          DEFAULT_APP_URL: https://quality-momentum-lab-d48ep9tlvdzdufjr23z4wq.streamlit.app
+        run: |
+          if [ -n "$MANUAL_APP_URL" ]; then
+            APP_URL="$MANUAL_APP_URL"
+          else
+            APP_URL="$DEFAULT_APP_URL"
+          fi
+          python .github/scripts/public_app_smoke.py --url "$APP_URL"
