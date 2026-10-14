@@ -11,7 +11,7 @@ on:
         default: https://quality-momentum-lab-d48ep9tlvdzdufjr23z4wq.streamlit.app
         type: string
   schedule:
-    # Weekly runtime check; this is not triggered on every push because hosted redeploys can lag.
+    # Weekly recheck plus a push-triggered check that waits for the expected version marker after host redeploy.
     - cron: "30 8 * * 1"
 
 permissions:
