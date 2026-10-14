@@ -1865,3 +1865,56 @@ def test_held_position_review_distinguishes_missing_metrics_from_low_score():
     queue = build_holdings_review(screener,["AAA"],check_fundamentals=False)
     assert queue.iloc[0]["Review action"] == "DATA REVIEW — metrics missing"
     assert "scores are missing" in queue.iloc[0]["Reasons"]
+
+
+def test_continuous_walk_forward_carries_portfolio_and_liquidates_only_at_final_oos_end():
+    from qlab.strategy import expanding_walk_forward
+
+    prices = synthetic_prices(1300)
+    folds, candidates, oos, metrics = expanding_walk_forward(
+        prices=prices,
+        min_score_candidates=(0.0, 20.0),
+        hysteresis_candidates=(0.0, 7.0),
+        train_months=12,
+        test_months=3,
+        step_months=3,
+        min_train_months=12,
+        top_n=2,
+        cost_bps=10,
+        initial=10_000,
+        min_adx=0,
+        min_score=0,
+        hysteresis=7,
+        max_replacements=1,
+        use_fundamentals=False,
+        stop_mode="No stop / month-end rebalancing",
+        continuous_portfolio=True,
+    )
+    assert len(folds) >= 4
+    assert folds["Portfolio continuity"].eq("Continuous account").all()
+    assert folds["Terminal liquidation turnover %"].iloc[:-1].eq(0).all()
+    assert not any("OOS" in column for column in candidates.columns)
+    assert len(oos) == int(folds["OOS months"].sum())
+    assert oos.index.is_monotonic_increasing and not oos.index.duplicated().any()
+    terminal_turnover = pd.to_numeric(oos["Terminal liquidation turnover"], errors="coerce").fillna(0)
+    assert terminal_turnover.iloc[:-1].eq(0).all()
+    assert np.allclose(oos["Equity"], 10_000 * (1 + oos["Net return"]).cumprod())
+    assert metrics["Portfolio continuity"] == "Continuous account"
+    assert metrics["OOS months"] == len(oos)
+    assert np.isfinite(metrics["OOS CAGR"])
+
+
+def test_backtest_validates_seeded_state_weights_and_tickers():
+    from qlab.strategy import run_monthly_backtest
+
+    prices = synthetic_prices(900)
+    with pytest.raises(ValueError, match="missing price histories"):
+        run_monthly_backtest(
+            prices, use_fundamentals=False, initial_holdings={"NOT_IN_PRICES"},
+            initial_weights={"NOT_IN_PRICES": 0.1}, stop_mode="No stop / month-end rebalancing",
+        )
+    with pytest.raises(ValueError, match="cannot exceed 100%"):
+        run_monthly_backtest(
+            prices, use_fundamentals=False, initial_holdings={"AAA", "BBB"},
+            initial_weights={"AAA": 0.7, "BBB": 0.4}, stop_mode="No stop / month-end rebalancing",
+        )
