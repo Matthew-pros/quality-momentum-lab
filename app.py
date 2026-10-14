@@ -17,6 +17,7 @@ from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_mar
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.review import compare_screener_snapshots
+from qlab.portfolio_review import build_holdings_review
 from qlab.tax_lots import fifo_ledger
 from qlab.universe import parse_universe_membership, tickers_in_membership_file, universe_members_asof
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
@@ -668,6 +669,54 @@ with tab_screener:
         shown.to_csv(index=False).encode("utf-8"),
         "quality_momentum_screener_filtered.csv", "text/csv"
     )
+    st.divider()
+    st.markdown("#### Kontrola aktuálně držených pozic")
+    st.caption("Zadej tickery, které opravdu držíš. Aplikace zkontroluje technické výstupní spouštěče, aktuální skóre a — mimo DEMO — úplnost fundamentů. Chybějící data nikdy sama o sobě neznamenají automatický prodej.")
+    held_tickers_text = st.text_input(
+        "Moje aktuální pozice (tickery oddělené čárkou)",
+        value="",
+        key="held_position_tickers",
+        placeholder="MSFT, AAPL, NVDA"
+    )
+    held_exit_floor = st.slider(
+        "Score floor pro kontrolu držené pozice",
+        min_value=0, max_value=80, value=35, step=5,
+        key="held_position_exit_floor",
+        help="Pozice na/nižší než tato hranice se označí k review, pokud již nemá vyšší prioritu kvůli technickému výstupu."
+    )
+    if held_tickers_text.strip():
+        try:
+            held_tickers = list(dict.fromkeys(
+                ticker.strip().upper()
+                for ticker in held_tickers_text.split(",")
+                if ticker.strip()
+            ))
+            holdings_queue = build_holdings_review(
+                screener,
+                held_tickers,
+                exit_score_floor=float(held_exit_floor),
+                min_fundamental_coverage=50,
+                check_fundamentals=not is_demo_mode,
+            )
+            exit_count = int(holdings_queue["Review action"].eq("EXIT REVIEW — technical rule broken").sum())
+            data_count = int(holdings_queue["Review action"].eq("DATA REVIEW — holding missing").sum())
+            thesis_count = int(holdings_queue["Review action"].eq("THESIS REVIEW — score below floor").sum())
+            a,b,d = st.columns(3)
+            a.metric("Exit review", str(exit_count))
+            b.metric("Data review", str(data_count))
+            d.metric("Score review", str(thesis_count))
+            st.dataframe(holdings_queue, width="stretch", hide_index=True, column_config={
+                "Current score": st.column_config.NumberColumn(format="%.1f"),
+                "Fundamental coverage %": st.column_config.NumberColumn(format="%.0f%%"),
+            })
+            st.download_button(
+                "Stáhnout kontrolu držených pozic CSV",
+                holdings_queue.to_csv(index=False).encode("utf-8"),
+                "held_positions_review.csv", "text/csv"
+            )
+            st.info("Tyto štítky jsou fronta pro lidskou kontrolu, ne obchodní pokyny. Zejména stop plnění, likvidita, spread, FX a změna fundamentální teze vyžadují samostatné posouzení.")
+        except Exception as exc:
+            st.error(f"Kontrola držených pozic selhala: {type(exc).__name__}: {exc}")
     st.divider()
     st.markdown("#### Týdenní kontrola materiálních změn")
     st.caption("Nahraj předchozí úplný snapshot screeneru. Aplikace porovná skóre, momentum, trend, 50denní minimum, signál a datum posledního výkazu. Výsledek je kontrolní fronta, nikoli automatický pokyn k obchodu.")
