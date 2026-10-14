@@ -1456,7 +1456,7 @@ def test_fifo_rejects_missing_or_infinite_numeric_inputs():
     for field, value in [("Quantity", np.nan), ("Price", np.inf), ("Fees", -np.inf)]:
         tx = pd.DataFrame([{
             "Date":"2024-01-01","Ticker":"AAA","Type":"BUY",
-            "Quantity":10,"Price":100,"Fees":0,"Currency":"USD",
+            "Quantity":10.0,"Price":100.0,"Fees":0.0,"Currency":"USD",
         }])
         tx.loc[0, field] = value
         with pytest.raises(ValueError, match="finite numbers"):
