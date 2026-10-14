@@ -1170,10 +1170,13 @@ with tab_strategy:
         st.warning("Test stále není survivorship-bias-free: vychází ze současného uživatelského seznamu tickerů. Denní stop je aproximace z OHLC (gap na open nebo fill na stop úrovni), nikoli intradenní exekuce. Cost model rozlišuje komisi, polovinu spreadu a skluz, ale neobsahuje fixní poplatky, market impact, FX ani daňový model.")
 
     wf_saved = st.session_state.get("expanding_walk_forward")
-    if wf_saved and wf_saved.get("signature") == signature:
+    if wf_saved and wf_saved.get("signature") == signature and wf_saved.get("continuous_portfolio", False) == wf_continuous_portfolio:
         st.divider()
         st.subheader("Expanding walk-forward · opakované out-of-sample foldy")
-        st.caption("V každém foldu se min-score × hystereze vyberou pouze podle předchozí historie (Sharpe, případně CAGR). Následujících šest měsíců tvoří test. Každý fold začíná s hotovostí, platí náklady na vstup/rebalancování a na konci se zbylé pozice modelově zlikvidují. Foldy se nepřekrývají.")
+        if wf_continuous_portfolio:
+            st.caption("V každém foldu se min-score × hystereze vyberou pouze podle předchozí historie. OOS portfolio průběžně přenáší pozice, váhy a ATR high-water marks mezi foldech; náklady na závěrečnou likvidaci se účtují pouze jednou na úplném konci celé OOS řady. Foldy se nepřekrývají.")
+        else:
+            st.caption("V každém foldu se min-score × hystereze vyberou pouze podle předchozí historie. Každý OOS fold začíná s hotovostí a na konci se zbylé pozice modelově zlikvidují včetně nákladů; výsledky tak představují oddělené epizody, nikoli nepřerušený účet. Foldy se nepřekrývají.")
         if wf_saved.get("error"):
             st.warning("Walk-forward nebyl dokončen: " + wf_saved["error"])
         else:
@@ -1182,18 +1185,21 @@ with tab_strategy:
             wa.metric("Agregovaný OOS CAGR", f"{wf_metrics['OOS CAGR']:.1%}")
             wb.metric("Agregovaný OOS Sharpe", "—" if not np.isfinite(wf_metrics["OOS Sharpe (rf=0)"]) else f"{wf_metrics['OOS Sharpe (rf=0)']:.2f}")
             wc.metric("OOS max. drawdown", f"{wf_metrics['OOS max drawdown']:.1%}")
-            wd.metric("Nezávislé foldy / měsíce", f"{int(wf_metrics['OOS folds'])} / {int(wf_metrics['OOS months'])}")
+            wd.metric("Foldy / měsíce", f"{int(wf_metrics['OOS folds'])} / {int(wf_metrics['OOS months'])}")
             we, wf, wg = st.columns(3)
             we.metric("OOS konečná hodnota", "$" + format(wf_metrics["OOS final equity"], ",.0f"))
             wf.metric("OOS obrat / měsíc", f"{wf_metrics['OOS average turnover %']:.1f}%")
             if "OOS benchmark CAGR" in wf_metrics:
                 wg.metric(f"OOS benchmark {benchmark_ticker} CAGR", f"{wf_metrics['OOS benchmark CAGR']:.1%}")
+            wl, wm = st.columns(2)
+            wl.metric("Modelované náklady závěrečné likvidace", f"{wf_metrics['Terminal liquidation cost % of starting equity sum']:.3f}%")
+            wm.metric("Režim portfolia", "Průběžný účet" if wf_continuous_portfolio else "Oddělené OOS epizody")
             wf_curve = wf_saved["curve"]
             fig_wf = go.Figure()
             fig_wf.add_trace(go.Scatter(x=wf_curve.index, y=wf_curve["Equity"], name="Expanding walk-forward OOS", line=dict(width=2.4, color="#72e0c1")))
             if "Benchmark equity" in wf_curve:
                 fig_wf.add_trace(go.Scatter(x=wf_curve.index, y=wf_curve["Benchmark equity"], name=f"Benchmark {benchmark_ticker}", line=dict(width=1.7, color="#f6bd60")))
-            fig_wf.update_layout(template="plotly_dark", title="Agregovaná OOS křivka po poplatcích a závěrečné likvidaci", height=360,
+            fig_wf.update_layout(template="plotly_dark", title="Agregovaná OOS křivka po poplatcích" + (" a závěrečné likvidaci" if wf_continuous_portfolio else " a likvidaci každého foldu"), height=360,
                 paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", hovermode="x unified")
             st.plotly_chart(fig_wf, width="stretch")
             st.markdown("#### Výsledky jednotlivých walk-forward foldů")
