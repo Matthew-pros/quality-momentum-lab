@@ -290,14 +290,16 @@ def generate_demo_market_data(
     dates = pd.bdate_range(end=end, periods=observations)
     prices: dict[str, pd.DataFrame] = {}
     report_rows = []
-    for position, ticker in enumerate(symbols):
+    for ticker in symbols:
         seed_bytes = hashlib.sha256(ticker.encode("utf-8")).digest()[:8]
         seed = int.from_bytes(seed_bytes, "little", signed=False)
         rng = np.random.default_rng(seed)
         annual_drift = 0.00010 + (seed % 31) / 100_000
         daily_vol = 0.008 + ((seed >> 8) % 8) / 1000
         log_returns = rng.normal(annual_drift, daily_vol, size=len(dates))
-        base = 25.0 + (position % 12) * 11.0
+        # Every synthetic ticker owns a stable path and base-price seed; changing the
+        # universe order or adding another symbol must not change existing demo data.
+        base = 25.0 + ((seed >> 16) % 12) * 11.0
         close = base * np.exp(np.cumsum(log_returns))
         open_price = close * np.exp(rng.normal(0.0, daily_vol * 0.35, size=len(dates)))
         high = np.maximum(open_price, close) * (1.0 + rng.uniform(0.001, 0.012, size=len(dates)))
