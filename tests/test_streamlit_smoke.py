@@ -1,4 +1,4 @@
-"""Offline Streamlit smoke test: runs the UI against deterministic synthetic OHLCV data."""
+"""Offline Streamlit smoke test: stubs the default live-data adapter with deterministic OHLCV."""
 from __future__ import annotations
 
 import numpy as np
@@ -29,6 +29,7 @@ def _fake_market_data(tickers, period="10y"):
             },
             index=index,
         )
+        frame.attrs["currency"] = "USD"
         result[ticker] = frame
         report.append({
             "Ticker": ticker,
@@ -38,13 +39,15 @@ def _fake_market_data(tickers, period="10y"):
             "Last date": index.max().date().isoformat(),
             "Missing %": 0.0,
             "Message": "",
+            "Currency": "USD",
+            "Source": "Yahoo Finance via yfinance",
         })
     return result, pd.DataFrame(report)
 
 
 def test_streamlit_home_and_tabs_render_without_live_network_calls(monkeypatch):
     monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
-    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
+    monkeypatch.setattr(qlab.data, "download_market_data", _fake_market_data)
     st.cache_data.clear()
 
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=40)
@@ -60,7 +63,7 @@ def test_streamlit_home_and_tabs_render_without_live_network_calls(monkeypatch):
 
 def test_streamlit_backtest_and_train_holdout_buttons_run_offline(monkeypatch):
     monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
-    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
+    monkeypatch.setattr(qlab.data, "download_market_data", _fake_market_data)
     st.cache_data.clear()
 
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=60)
@@ -95,7 +98,7 @@ def test_streamlit_backtest_and_train_holdout_buttons_run_offline(monkeypatch):
 
 def test_streamlit_dcf_form_calculates_and_renders_sensitivity_offline(monkeypatch):
     monkeypatch.delenv("SEC_CONTACT_EMAIL", raising=False)
-    monkeypatch.setattr(qlab.data, "generate_demo_market_data", _fake_market_data)
+    monkeypatch.setattr(qlab.data, "download_market_data", _fake_market_data)
     st.cache_data.clear()
 
     app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=60)
