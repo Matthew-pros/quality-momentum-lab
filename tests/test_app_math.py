@@ -2029,3 +2029,102 @@ def test_cost_sensitivity_rejects_scenario_that_drives_nav_to_zero():
     }, index=pd.to_datetime(["2024-01-31"]))
     with pytest.raises(ValueError, match="causes a monthly return at or below -100%"):
         cost_sensitivity(curve, initial=10_000, cost_scenarios_bps=(10_000,))
+
+
+def test_yfinance_adapter_loads_real_ohlcv_and_verifies_currency_offline(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from qlab.data import download_market_data
+
+    index = pd.bdate_range("2025-01-06", periods=5)
+    closes = np.array([100.0, 101.0, 102.5, 99.5, 103.0])
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def history(self, **kwargs):
+            assert kwargs["period"] == "5y"
+            assert kwargs["interval"] == "1d"
+            assert kwargs["auto_adjust"] is False
+            assert kwargs["repair"] is True
+            close = closes + (10.0 if self.symbol == "BBB" else 0.0)
+            return pd.DataFrame({
+                "Open": close * 0.995,
+                "High": close * 1.01,
+                "Low": close * 0.99,
+                "Close": close,
+                "Adj Close": close * 0.98,
+                "Volume": np.full(5, 1_000_000),
+            }, index=index)
+
+        def get_history_metadata(self, repair=True):
+            return {"currency": "USD" if self.symbol == "AAA" else "EUR"}
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=FakeTicker))
+    prices, report = download_market_data(["aaa", "bbb"], period="5y", now="2025-01-15 12:00")
+
+    assert set(prices) == {"AAA", "BBB"}
+    assert prices["AAA"].attrs["currency"] == "USD"
+    assert prices["BBB"].attrs["currency"] == "EUR"
+    assert "Adj Open" in prices["AAA"].columns
+    assert report["Status"].eq("OK").all()
+    assert report.set_index("Ticker").loc["AAA", "Currency"] == "USD"
+    assert report["Source"].str.contains("yfinance").all()
+
+
+def test_yfinance_adapter_retries_transient_failures_and_reports_invalid_ticker(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from qlab.data import download_market_data
+
+    index = pd.bdate_range("2025-01-06", periods=4)
+    good = pd.DataFrame({
+        "Open": [10.0, 10.5, 10.2, 10.7],
+        "High": [10.6, 10.8, 10.8, 11.0],
+        "Low": [9.8, 10.0, 10.0, 10.3],
+        "Close": [10.2, 10.4, 10.5, 10.8],
+        "Adj Close": [10.1, 10.3, 10.4, 10.7],
+        "Volume": [1000, 1100, 1050, 1200],
+    }, index=index)
+    attempts = {"GOOD": 0, "BAD": 0}
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        def history(self, **kwargs):
+            attempts[self.symbol] += 1
+            if self.symbol == "GOOD" and attempts[self.symbol] == 1:
+                raise RuntimeError("temporary connection timeout")
+            if self.symbol == "BAD":
+                raise ValueError("Invalid ticker: no data found")
+            return good.copy()
+
+        def get_history_metadata(self, repair=True):
+            return {"currency": "USD"}
+
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=FakeTicker))
+    monkeypatch.setattr("qlab.data.time.sleep", lambda _: None)
+    prices, report = download_market_data(["GOOD", "BAD"], period="5y", now="2025-01-15 12:00")
+
+    assert "GOOD" in prices
+    assert attempts["GOOD"] == 2
+    assert "BAD" not in prices
+    bad = report.set_index("Ticker").loc["BAD"]
+    assert bad["Status"] == "MISSING"
+    assert "no data found" in bad["Message"].lower()
+
+
+def test_yfinance_adapter_drops_unfinished_current_session_bar_before_us_close():
+    from qlab.data import _drop_incomplete_current_bar
+
+    frame = pd.DataFrame(
+        {"Close": [100.0, 101.0]},
+        index=pd.to_datetime(["2026-10-22", "2026-10-23"]),
+    )
+    before_close = _drop_incomplete_current_bar(frame, now="2026-10-23 15:00")
+    after_close = _drop_incomplete_current_bar(frame, now="2026-10-23 16:30")
+
+    assert before_close.index.tolist() == [pd.Timestamp("2026-10-22")]
+    assert after_close.index.tolist() == [pd.Timestamp("2026-10-22"), pd.Timestamp("2026-10-23")]

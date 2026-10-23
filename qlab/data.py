@@ -1,11 +1,12 @@
 """Data adapters for Quality Momentum Lab.
 
-Yahoo Finance is experimental OHLCV only through the unofficial yfinance interface.
+Yahoo Finance daily OHLCV is accessed through the unofficial yfinance library.
 SEC Company Facts supplies standardized reported facts for mapped SEC filers.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time as datetime_time
+from zoneinfo import ZoneInfo
 import hashlib
 import time
 import re
@@ -353,83 +354,187 @@ def generate_demo_market_data(
     return prices, report
 
 
+
+def _yfinance_currency(ticker_obj) -> str:
+    """Read quote currency from Yahoo metadata; never infer it from ticker spelling."""
+    sources = []
+    metadata_getter = getattr(ticker_obj, "get_history_metadata", None)
+    if callable(metadata_getter):
+        sources.append(lambda: metadata_getter(repair=True))
+    sources.append(lambda: getattr(ticker_obj, "history_metadata", None))
+    sources.append(lambda: getattr(ticker_obj, "fast_info", None))
+    for source in sources:
+        try:
+            metadata = source()
+            if not metadata:
+                continue
+            value = metadata.get("currency") if hasattr(metadata, "get") else metadata["currency"]
+            if value and re.fullmatch(r"[A-Za-z]{3}", str(value).strip()):
+                return str(value).strip().upper()
+        except Exception:
+            continue
+    return "UNKNOWN"
+
+
+def _drop_incomplete_current_bar(frame: pd.DataFrame, now=None) -> pd.DataFrame:
+    """Exclude today's unfinished daily bar before the US regular close."""
+    if frame is None or frame.empty:
+        return pd.DataFrame() if frame is None else frame
+    if now is None:
+        market_now = datetime.now(ZoneInfo("America/New_York"))
+    else:
+        market_now = pd.Timestamp(now)
+        if market_now.tzinfo is None:
+            market_now = market_now.tz_localize("America/New_York")
+        else:
+            market_now = market_now.tz_convert("America/New_York")
+    today = market_now.date()
+    before_close = market_now.time() < datetime_time(16, 15)
+    keep = []
+    for value in frame.index:
+        try:
+            bar_date = pd.Timestamp(value).date()
+            keep.append(bar_date < today if before_close else bar_date <= today)
+        except (TypeError, ValueError):
+            keep.append(False)
+    return frame.loc[keep].copy()
+
+
 def download_market_data(
     tickers: str | list[str],
     period: str = "10y",
+    now=None,
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
-    """Download one non-threaded batch and retry only partial failures, sequentially."""
+    """Fetch actual daily OHLCV through yfinance with bounded retries and provenance.
+
+    This adapter never substitutes synthetic prices when Yahoo Finance is unavailable.
+    Missing tickers are reported individually; provider-wide rate limiting short-circuits
+    further requests to avoid hammering an already-limited endpoint.
+    """
     symbols = normalize_tickers(tickers)
     report_columns = [
-        "Ticker", "Status", "Rows", "First date", "Last date", "Missing %", "Message",
+        "Ticker", "Status", "Rows", "First date", "Last date", "Missing %",
+        "Message", "Source", "Currency",
     ]
     if not symbols:
         return {}, pd.DataFrame(columns=report_columns)
     try:
-        import yfinance as yf  # Optional developer-only adapter; not used by the public UI.
+        import yfinance as yf
     except ImportError:
+        message = (
+            "The yfinance package is not installed. Install the runtime dependencies "
+            "with python -m pip install -r requirements.txt."
+        )
         return {}, pd.DataFrame([
             {
                 "Ticker": ticker, "Status": "MISSING", "Rows": 0,
                 "First date": "", "Last date": "", "Missing %": 100.0,
-                "Message": "Optional yfinance package is not installed; use licensed OHLCV CSV instead.",
+                "Message": message, "Source": "Yahoo Finance via yfinance",
+                "Currency": "UNKNOWN",
             }
             for ticker in symbols
         ], columns=report_columns)
-    raw = pd.DataFrame()
-    batch_error = ""
-    try:
-        raw = yf.download(
-            tickers=symbols if len(symbols) > 1 else symbols[0],
-            period=period,
-            auto_adjust=False,
-            actions=False,
-            group_by="ticker",
-            threads=False,
-            progress=False,
-            timeout=30,
-            repair=False,
-        )
-    except Exception as exc:
-        batch_error = f"{type(exc).__name__}: {exc}"
-    prices: dict[str, pd.DataFrame] = {}
-    initial_report = []
-    for ticker in symbols:
-        frame = _extract_ticker_frame(raw, ticker, symbols)
-        if not frame.empty:
-            prices[ticker] = _add_adjusted_ohlc(frame)
-        initial_report.append({
-            "Ticker": ticker,
-            "Status": "OK" if ticker in prices else "MISSING",
-            "Rows": len(prices[ticker]) if ticker in prices else 0,
-            "First date": prices[ticker].index.min().date().isoformat() if ticker in prices else "",
-            "Last date": prices[ticker].index.max().date().isoformat() if ticker in prices else "",
-            "Missing %": round(float(prices[ticker]["Close"].isna().mean() * 100), 2) if ticker in prices else 100.0,
-            "Message": "" if ticker in prices else (batch_error or "Provider returned no rows for this ticker"),
-        })
-    # A total outage/401 should not cause a burst of per-symbol retries.
-    if prices and len(prices) < len(symbols):
-        for ticker in symbols:
-            if ticker in prices:
-                continue
-            try:
-                one = yf.download(
-                    tickers=ticker, period=period, auto_adjust=False, actions=False,
-                    group_by="column", threads=False, progress=False, timeout=30, repair=False,
-                )
-                frame = _extract_ticker_frame(one, ticker, [ticker])
-                if not frame.empty:
-                    prices[ticker] = _add_adjusted_ohlc(frame)
-            except Exception:
-                continue
-    report = pd.DataFrame(initial_report)
-    for ticker, frame in prices.items():
-        mask = report["Ticker"].eq(ticker)
-        report.loc[mask, ["Status", "Rows", "First date", "Last date", "Missing %", "Message"]] = [
-            "OK", len(frame), frame.index.min().date().isoformat(), frame.index.max().date().isoformat(),
-            round(float(frame["Close"].isna().mean() * 100), 2), "",
-        ]
-    return assess_price_quality(prices, report)
 
+    source = "Yahoo Finance via yfinance (daily OHLCV)"
+    prices: dict[str, pd.DataFrame] = {}
+    report_rows: list[dict[str, Any]] = []
+    provider_rate_limited = False
+    transient_fragments = (
+        "timeout", "timed out", "connection", "temporar", "crumb", "401",
+        "429", "500", "502", "503", "504", "no data", "empty",
+    )
+    rate_limit_fragments = ("429", "rate limit", "too many requests", "rate-limited")
+
+    for ticker in symbols:
+        error_message = ""
+        currency = "UNKNOWN"
+        if provider_rate_limited:
+            report_rows.append({
+                "Ticker": ticker, "Status": "MISSING", "Rows": 0,
+                "First date": "", "Last date": "", "Missing %": 100.0,
+                "Message": "Skipped after Yahoo Finance rate limiting on a previous ticker; retry later.",
+                "Source": source, "Currency": currency,
+            })
+            continue
+
+        frame = pd.DataFrame()
+        for attempt in range(3):
+            try:
+                ticker_obj = yf.Ticker(ticker)
+                raw = ticker_obj.history(
+                    period=period,
+                    interval="1d",
+                    auto_adjust=False,
+                    actions=False,
+                    repair=True,
+                    timeout=30,
+                    raise_errors=True,
+                )
+                frame = _extract_ticker_frame(raw, ticker, [ticker])
+                if frame.empty or not pd.to_numeric(frame.get("Close"), errors="coerce").notna().any():
+                    raise ValueError(
+                        "Yahoo Finance returned no usable daily bars. Check the ticker symbol, "
+                        "listing suffix, and provider availability."
+                    )
+                frame = _add_adjusted_ohlc(frame)
+                frame = _drop_incomplete_current_bar(frame, now=now)
+                if frame.empty or not pd.to_numeric(frame.get("Close"), errors="coerce").notna().any():
+                    raise ValueError("No completed daily bars remain after excluding the current session.")
+                currency = _yfinance_currency(ticker_obj)
+                frame.attrs["currency"] = currency
+                prices[ticker] = frame
+                error_message = ""
+                break
+            except Exception as exc:
+                error_message = f"{type(exc).__name__}: {exc}"
+                lower_error = error_message.lower()
+                is_rate_limit = any(part in lower_error for part in rate_limit_fragments)
+                is_transient = is_rate_limit or any(part in lower_error for part in transient_fragments)
+                if is_rate_limit and attempt >= 1:
+                    provider_rate_limited = True
+                    break
+                if not is_transient or attempt >= 2:
+                    break
+                time.sleep(0.75 * (attempt + 1))
+
+        if ticker in prices:
+            clean = prices[ticker]
+            report_rows.append({
+                "Ticker": ticker,
+                "Status": "OK",
+                "Rows": len(clean),
+                "First date": pd.Timestamp(clean.index.min()).date().isoformat(),
+                "Last date": pd.Timestamp(clean.index.max()).date().isoformat(),
+                "Missing %": round(float(clean["Close"].isna().mean() * 100), 2),
+                "Message": "" if currency != "UNKNOWN" else (
+                    "Quote currency could not be verified from Yahoo metadata; USD-valued "
+                    "backtest/sizing stays disabled until the currency is verified."
+                ),
+                "Source": source,
+                "Currency": currency,
+            })
+        else:
+            if provider_rate_limited:
+                error_message = (
+                    f"{error_message}; Yahoo Finance rate limit reached. Remaining symbols were not requested."
+                    if error_message else
+                    "Yahoo Finance rate limit reached. Remaining symbols were not requested."
+                )
+            report_rows.append({
+                "Ticker": ticker, "Status": "MISSING", "Rows": 0,
+                "First date": "", "Last date": "", "Missing %": 100.0,
+                "Message": error_message or "Yahoo Finance did not return usable daily data.",
+                "Source": source, "Currency": "UNKNOWN",
+            })
+
+    report = pd.DataFrame(report_rows, columns=report_columns)
+    prices, report = assess_price_quality(prices, report, now=now)
+    if "Currency" not in report:
+        report["Currency"] = "UNKNOWN"
+    for ticker, frame in prices.items():
+        row = report.loc[report["Ticker"].eq(ticker), "Currency"]
+        frame.attrs["currency"] = str(row.iloc[0]) if not row.empty else "UNKNOWN"
+    return prices, report
 
 def parse_quote_currency_map(value: str | None) -> dict[str, str]:
     """Parse explicit TICKER=ISO4217 quote currency metadata; never guess a currency."""
