@@ -1,0 +1,36 @@
+name: Yahoo Finance live data check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "qlab/data.py"
+      - "requirements.txt"
+      - ".github/scripts/yfinance_live_smoke.py"
+      - ".github/workflows/yfinance-live-smoke.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "45 8 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yahoo-finance-live-data-check
+  cancel-in-progress: true
+
+jobs:
+  live-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install runtime dependencies
+        run: python -m pip install --upgrade pip -r requirements.txt
+      - name: Verify Yahoo Finance returns recent real prices
+        run: python .github/scripts/yfinance_live_smoke.py
