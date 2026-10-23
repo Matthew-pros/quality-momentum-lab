@@ -14,7 +14,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from qlab.data import generate_demo_market_data, load_ohlcv_csv, load_tiingo_market_data, parse_quote_currency_map, apply_quote_currency_map, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis, currency_validation_universe
+from qlab.data import generate_demo_market_data, download_market_data, load_ohlcv_csv, load_tiingo_market_data, parse_quote_currency_map, apply_quote_currency_map, load_sec_ticker_map, load_sec_company_facts, sec_fundamental_snapshot, sec_snapshot_to_history, validate_usd_price_basis, currency_validation_universe
 from qlab.strategy import prepare_screener, calculate_indicators, run_monthly_backtest, calculate_position_sizes, cost_sensitivity, chronological_period_summary, moving_block_bootstrap_uncertainty, train_select_holdout_search, expanding_walk_forward, compare_stop_variants, industry_exposure_summary
 from qlab.optional_signals import parse_signal_csv, latest_signals, signal_history
 from qlab.review import compare_screener_snapshots
@@ -23,7 +23,7 @@ from qlab.tax_lots import fifo_ledger
 from qlab.universe import parse_universe_membership, tickers_in_membership_file, universe_members_asof
 from qlab.valuation import calculate_fcfe_dcf, dcf_sensitivity
 
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.9.0"
 DEFAULT_UNIVERSE = "MSFT,AAPL,GOOGL,AMZN,META,NVDA,AVGO,ORCL,ADBE,CRM,CSCO,INTU,LLY,JNJ,AZN,NVO,RELX,OTIS,ASML,TSM"
 DEFAULT_DEMO_UNIVERSE = "SIM01,SIM02,SIM03,SIM04,SIM05,SIM06,SIM07,SIM08,SIM09,SIM10,SIM11,SIM12"
 BENCHMARKS = ("SPY",)
@@ -51,6 +51,27 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+def session_yfinance_market_data(symbols: tuple[str, ...], period: str):
+    """Cache Yahoo responses per visitor session to avoid network calls on every rerun."""
+    now = time.time()
+    cache = st.session_state.get("_yfinance_eod_session_cache")
+    if (
+        cache is not None
+        and cache.get("symbols") == symbols
+        and cache.get("period") == period
+        and now - float(cache.get("fetched_at", 0)) < 6 * 60 * 60
+    ):
+        return cache["data"]
+    data = download_market_data(list(symbols), period)
+    st.session_state["_yfinance_eod_session_cache"] = {
+        "symbols": symbols,
+        "period": period,
+        "fetched_at": now,
+        "data": data,
+    }
+    return data
+
 
 def session_tiingo_market_data(symbols: tuple[str, ...], token: str, period: str):
     # Keep any data cache in this user's Streamlit session only; never place tokens
@@ -198,14 +219,16 @@ with st.sidebar:
     price_provider = st.selectbox(
         "Zdroj cenových dat",
         [
-            "Demo — syntetická data (bez externího API)",
+            "Yahoo Finance (yfinance) — skutečné denní ceny zdarma",
+            "Demo — syntetická data (pouze test UI)",
             "Tiingo EOD — vlastní API token (osobní data)",
             "Import OHLCV CSV (vlastní/licencovaná data)",
         ],
         index=0,
-        help="Veřejný režim se spouští nad syntetickými daty, aby nepublikoval tržní data bez ověřené licence. Pro skutečné ceny nahraj CSV ze zdroje, který dovoluje veřejné zobrazení."
+        help="Výchozí režim načítá skutečné denní OHLCV přes yfinance/Yahoo Finance, bez vlastního API tokenu. Bezplatná data mohou být zpožděná, opravena zpětně nebo dočasně nedostupná. Používej pouze v souladu s podmínkami Yahoo Finance; veřejné redistribuci dat se vyhni."
     )
     is_demo_mode = price_provider.startswith("Demo")
+    is_yfinance_mode = price_provider.startswith("Yahoo Finance")
     ticker_text = st.text_area(
         "Investiční univerzum",
         DEFAULT_DEMO_UNIVERSE if is_demo_mode else DEFAULT_UNIVERSE,
@@ -277,6 +300,8 @@ with st.sidebar:
     period = st.selectbox("Historie cen", ["5y", "10y", "max"], index=1)
     if is_demo_mode:
         st.warning("DEMO: všechny ceny, výnosy a signály jsou syntetické, nejsou to kotace skutečných společností. SEC fundamenty se v demo režimu nenačítají.")
+    elif is_yfinance_mode:
+        st.caption("Zdroj: Yahoo Finance přes yfinance, skutečné denní OHLCV bez tokenu. Bar aktuálního obchodního dne se před 16:15 ET vylučuje, aby nezkreslil close-based indikátory. Data se mohou měnit, být zpožděná či dočasně nedostupná; nejde o garantovaný real-time ani burzovně certifikovaný feed. Respektuj podmínky Yahoo Finance a data veřejně nepřerozděluj bez oprávnění.")
     elif price_provider.startswith("Tiingo"):
         st.caption("Ceny načítá Tiingo End-of-Day (zdroj uveden u tabulek). Používej vlastní účet/token podle podmínek služby; pro veřejnou sdílenou distribuci dat může být nutná samostatná licence.")
     else:
@@ -333,6 +358,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.session_state.pop("backtest_result", None)
         st.session_state.pop("_tiingo_eod_session_cache", None)
+        st.session_state.pop("_yfinance_eod_session_cache", None)
         st.rerun()
 
 universe = (
@@ -375,6 +401,8 @@ with st.spinner("Načítám cenová data a kontroluji kvalitu…"):
     try:
         if is_demo_mode:
             price_data_all, price_report = generate_demo_market_data(list(symbols), period)
+        elif is_yfinance_mode:
+            price_data_all, price_report = session_yfinance_market_data(symbols, period)
         elif price_provider.startswith("Tiingo"):
             if not tiingo_token.strip():
                 st.error("Vlož svůj vlastní Tiingo API token. Token se do repozitáře ani veřejných secrets neukládá.")
@@ -409,7 +437,13 @@ prices = {
 }
 missing_investable_tickers = sorted(set(universe) - set(prices))
 if not prices:
-    st.error("Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. Zkontroluj omezení zdroje nebo to zkus později.")
+    st.error(
+        "Zdroj nevrátil použitelnou cenu pro žádný zadaný ticker. U Yahoo Finance zkontroluj zápis symbolů "
+        "a stav veřejného poskytovatele; aplikace nikdy nenahrazuje skutečné ceny simulovanými."
+    )
+    if "Message" in price_report.columns:
+        st.dataframe(price_report[[c for c in ["Ticker", "Status", "Message"] if c in price_report.columns]],
+                     width="stretch", hide_index=True)
     st.stop()
 if universe_history is not None:
     membership_tickers = set(tickers_in_membership_file(universe_history))
@@ -478,16 +512,21 @@ elif currency_unknown_tickers and currency_confirm_usd:
 # Preserve source provenance in every downloadable data-quality report.
 price_source_label = (
     "Deterministic synthetic DEMO" if is_demo_mode
-    else ("Tiingo EOD (user token)" if price_provider.startswith("Tiingo") else "User-supplied OHLCV CSV")
+    else (
+        "Yahoo Finance via yfinance" if is_yfinance_mode
+        else ("Tiingo EOD (user token)" if price_provider.startswith("Tiingo") else "User-supplied OHLCV CSV")
+    )
 )
-source_filename = "" if is_demo_mode or price_provider.startswith("Tiingo") or price_csv_upload is None else price_csv_upload.name
+source_filename = "" if is_demo_mode or is_yfinance_mode or price_provider.startswith("Tiingo") or price_csv_upload is None else price_csv_upload.name
 if "Price source" in price_report:
     price_report = price_report.drop(columns=["Price source"])
 if "Source file" in price_report:
     price_report = price_report.drop(columns=["Source file"])
 price_report.insert(0, "Price source", price_source_label)
 price_report.insert(1, "Source file", source_filename)
-if not is_demo_mode and price_provider.startswith("Tiingo"):
+if is_yfinance_mode:
+    price_report["Adjustment status"] = "Yahoo Adj Close used; OHLC adjusted by Adj Close / Close; provider values not independently audited"
+elif not is_demo_mode and price_provider.startswith("Tiingo"):
     price_report["Adjustment status"] = "Tiingo adjOHLC provided; adjustment basis not independently audited"
 elif not is_demo_mode and price_csv_upload is not None:
     no_adj_close = price_report.get("Message", pd.Series("", index=price_report.index)).fillna("").astype(str).str.contains("Adj Close absent")
@@ -1518,7 +1557,14 @@ with tab_data:
     st.download_button("Stáhnout quality report CSV",price_report.to_csv(index=False).encode("utf-8"),"data_quality_report.csv","text/csv")
     combined = _download_frame(price_data_all)
     long_ohlcv = _download_ohlcv_long(price_data_all)
-    if price_provider.startswith("Tiingo"):
+    if is_yfinance_mode:
+        st.info(
+            "Používáš Yahoo Finance přes yfinance. Hromadný export cenových řad je v této veřejné aplikaci vypnutý. "
+            "Bezplatný neoficiální endpoint může omezovat požadavky nebo měnit data; zobrazení a užití musí odpovídat "
+            "podmínkám Yahoo Finance. Pro osobní výzkum spusť aplikaci lokálně nebo v soukromém nasazení."
+        )
+        st.caption("Zdroj cen: Yahoo Finance přes [yfinance](https://ranaroussi.github.io/yfinance/) · data nejsou burzovně certifikovaná.")
+    elif price_provider.startswith("Tiingo"):
         st.info(
             "Tiingo ceny načítáš vlastním tokenem. Export raw/adjustované cenové historie je v této veřejné aplikaci vypnutý, "
             "aby výchozí workflow data hromadně nepřerozděloval. Respektuj podmínky svého účtu; vývojářský režim předpokládá "
